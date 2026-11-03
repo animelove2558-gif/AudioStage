@@ -42,9 +42,13 @@ okAsync('offline / no release / rate limit → messages people can act on (and t
   assert(/limiting/.test(U.friendly(new Error('HttpError: 403 rate limit exceeded')))); assert(/checksum/.test(U.friendly(new Error('sha512 checksum mismatch'))));
   const { u, au } = make(); au.checkForUpdates = async () => { throw new Error('getaddrinfo ENOTFOUND github.com'); }; assert(/internet/.test((await u.check()).error)); assert.strictEqual(u.status().state, 'idle');
 });
-ok('build config: GitHub publish without an owner (so no app-update.yml until one is set), dist never publishes; electron-updater is MIT', () => {
-  const pj = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8')), pub = pj.build.publish[0];
-  assert(pub.provider === 'github' && pub.repo === 'AudioStage' && !pub.owner, JSON.stringify(pub)); assert(/--publish never/.test(pj.scripts.dist));
+ok('build config: no publish target (updates come through the BYS All Stages Launcher, so no app-update.yml and Check for Updates is hidden), dist never publishes; electron-updater is MIT', () => {
+  const pj = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+  assert(!pj.build.publish, JSON.stringify(pj.build.publish)); assert(/--publish never/.test(pj.scripts.dist)); assert(!pj.homepage, 'no placeholder homepage');
+  assert.strictEqual(pj.license, 'UNLICENSED'); assert.strictEqual(pj.author, 'BYS & RB'); assert.strictEqual(pj.build.copyright, 'Copyright (c) BYS & RB. All rights reserved by BYS & RB');
+  assert(!pj.dependencies.lamejs, 'lamejs is the vendored app/vendor/lame.min.js, not a packaged dependency'); assert(fs.existsSync(path.join(__dirname, '../app/vendor/lame.LICENSE.txt')), 'its LGPL notice ships with it');
+  const pre = fs.readFileSync(path.join(__dirname, '../electron/preload.js'), 'utf8'); assert(/if \(updatesOn\) contextBridge\.exposeInMainWorld\('audioStageUpdate'/.test(pre), 'the update API (and menu item) only with a usable update source');
+  const u0 = new U.Updater({ packaged: true, resourcesPath: tmp, version: '2.1.0' }); assert.strictEqual(u0.status().enabled, false, 'no app-update.yml → off');
   assert(pj.dependencies['electron-updater']); assert.strictEqual(require('electron-updater/package.json').license, 'MIT');
   assert(pj.build.files.includes('electron/**/*'), 'electron/updater.js is packaged');
 });

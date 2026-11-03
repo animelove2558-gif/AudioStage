@@ -151,6 +151,7 @@ const upd = require('./electron/updater');
 let updMock = null; if (SELFTEST && process.env.AUDIOSTAGE_UPDATE_MOCK) { try { updMock = upd.mockUpdater(JSON.parse(process.env.AUDIOSTAGE_UPDATE_MOCK)); } catch (e) { /* */ } }
 const updater = new upd.Updater({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, version: app.getVersion(), startupCheck: !SELFTEST, log: (l, m) => log.write(l, m), send: (ch, d) => { if (win && !win.isDestroyed()) win.webContents.send(ch, d); },
   ...(updMock ? { autoUpdater: updMock, feed: { provider: 'github', owner: 'selftest', repo: 'AudioStage' } } : {}) });
+ipcMain.on('upd:enabled', (e) => { e.returnValue = updater.status().enabled; }); // (preload: show the menu item or not)
 ipcMain.handle('upd:status', wrap(() => ({ status: updater.status() })));
 ipcMain.handle('upd:check', wrap(() => updater.check()));
 ipcMain.handle('upd:download', wrap(() => updater.download()));
@@ -338,6 +339,9 @@ ipcMain.handle('extedit:save', wrap((e, p, data) => {
   writeFileAtomic(p, data); return { path: p }; // EditorStage's clip is replaced only by a complete file
 }));
 
+const DEVTOOLS = !app.isPackaged || process.env.AUDIOSTAGE_DEVTOOLS === '1';
+const APP_PAGE = require('url').pathToFileURL(path.join(__dirname, 'app', 'index.html')).href;
+const isAppPage = (url) => { try { const u = new URL(url); u.hash = ''; u.search = ''; return u.href.toLowerCase() === APP_PAGE.toLowerCase(); } catch (e) { return false; } };
 function createWindow() {
   win = new BrowserWindow({
     width: 1500, height: 900, minWidth: 900, minHeight: 600, backgroundColor: '#1b1d21', title: 'AudioStage', show: !SELFTEST,
@@ -345,9 +349,16 @@ function createWindow() {
   });
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
+  // the main window only ever shows app/index.html: no new windows (web links open in the browser) and no
+  // navigation to anything else (a dropped .html file or a link in metadata would otherwise get the preload API)
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:\/\//i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (!isAppPage(url)) { e.preventDefault(); if (/^https?:\/\//i.test(url)) shell.openExternal(url); } });
+  win.webContents.on('will-redirect', (e, url) => { if (!isAppPage(url)) e.preventDefault(); });
+  // F12 = developer tools: only when running from the source folder (npm start) or with AUDIOSTAGE_DEVTOOLS=1
   win.webContents.on('before-input-event', (e, input) => {
-    if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools();
+    if (input.type === 'keyDown' && input.key === 'F12' && DEVTOOLS) win.webContents.toggleDevTools();
   });
+  if (!DEVTOOLS) win.webContents.on('devtools-opened', () => win.webContents.closeDevTools());
   // the page asks to stay open (unsaved files): Electron would cancel the close silently, so ask the user
   win.webContents.on('will-prevent-unload', (e) => {
     if (SELFTEST) { e.preventDefault(); return; }

@@ -1,4 +1,7 @@
-// Help > Check for Updates… and the check when the app opens (installed app only): electron-updater (MIT) with GitHub
+// Help > Check for Updates… and the check when the app opens (installed app only): electron-updater (MIT). AudioStage normally
+// gets its updates through the BYS All Stages Launcher, so package.json has no build.publish: then no app-update.yml is
+// built, this stays off and the menu item is not shown (preload.js). The rest is kept for a copy that has an update source:
+// GitHub
 // Releases (free). The repository is build.publish in package.json; electron-builder turns it into
 // resources/app-update.yml. While no GitHub owner is set there, no app-update.yml is built and updates stay off quietly
 // (no error, no network). Nothing is downloaded or installed without asking: autoDownload / autoInstallOnAppQuit are off.

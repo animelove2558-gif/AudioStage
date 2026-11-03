@@ -10,7 +10,10 @@ contextBridge.exposeInMainWorld('audioStageVideo', {
 });
 
 // Help > Check for Updates…: check / download / install only when the person says so (electron/updater.js)
-contextBridge.exposeInMainWorld('audioStageUpdate', {
+// only when this copy has a usable update source (an installed app with app-update.yml); AudioStage normally gets its
+// updates through the BYS All Stages Launcher, so then Help > Check for Updates… and the preference are not shown
+let updatesOn = false; try { updatesOn = ipcRenderer.sendSync('upd:enabled') === true; } catch (e) { /* */ }
+if (updatesOn) contextBridge.exposeInMainWorld('audioStageUpdate', {
   status: () => ipcRenderer.invoke('upd:status'),
   check: () => ipcRenderer.invoke('upd:check'),
   download: () => ipcRenderer.invoke('upd:download'),

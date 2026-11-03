@@ -19,15 +19,14 @@
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
-  },
-  "dependencies": {
-    "electron-updater": "^6.3.9",
+    "electron-builder": "^25.1.8",
     "lamejs": "^1.2.1"
   },
-  "license": "MIT",
-  "author": "BYS All Stages",
-  "homepage": "https://github.com/",
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "license": "UNLICENSED",
+  "author": "BYS & RB",
   "build": {
     "appId": "com.bys.audiostage",
     "productName": "AudioStage",
@@ -89,8 +88,8 @@
       "category": "AudioVideo;Audio;AudioVideoEditing",
       "executableName": "audiostage",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "maintainer": "BYS All Stages <animelove2558@gmail.com>",
-      "vendor": "BYS All Stages",
+      "maintainer": "BYS & RB <animelove2558@gmail.com>",
+      "vendor": "BYS & RB",
       "synopsis": "Audio editor and multitrack mixer",
       "description": "AudioStage is a free, offline audio editor and multitrack mixer: waveform and spectral editing, effects rack, recording, multitrack sessions (.asession), VST3 plugins (optional) and export to WAV, MP3, FLAC, Opus and more.",
       "mimeTypes": [
@@ -162,13 +161,6 @@
         "description": "AudioStage multitrack session",
         "role": "Editor",
         "icon": "build/asession.ico"
-      }
-    ],
-    "publish": [
-      {
-        "provider": "github",
-        "repo": "AudioStage",
-        "releaseType": "release"
       }
     ]
   }
