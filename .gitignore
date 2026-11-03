@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.venv/
+**/.venv/
+tools/vst/.venv/
+*.log
+__pycache__/

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AudioStage</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; script-src 'self'; worker-src 'self'">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232d8ceb'/%3E%3Cpath d='M3 8h1v0M5 5v6M7 3v10M9 6v4M11 4v8M13 7v2' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <div id="menubar"></div>
+
+  <div id="toolbar">
+    <div class="tgroup" id="modeSwitch">
+      <button data-mode="wave" class="on">Waveform</button>
+      <button data-mode="multi">Multitrack</button>
+    </div>
+    <div class="tgroup" id="specToggle"><span id="viewSwitch">
+      <button data-v="wave" class="on" title="Waveform view">Wave</button>
+      <button data-v="spec" title="Spectral frequency display">Spectral</button></span><span id="specTools"><button data-tool="time" class="on" title="Time selection tool (T)">Time</button><button data-tool="marquee" title="Marquee selection tool: time + frequency box (E)">Marquee</button><button data-tool="lasso" title="Lasso selection tool: draw a free-form region (D)">Lasso</button><button data-tool="brush" title="Brush selection tool: paint a region, Shift adds (P)">Brush</button><button data-tool="heal" title="Spot Healing Brush: paint over a click or noise to heal it (B)">Heal</button><button data-tool="harm" title="Auto-select Harmonics: click a sound to select it with all its harmonics (H)">Harmonics</button><input type="range" id="brushSize" min="3" max="80" step="1" value="14" title="Brush size ([ / ])" hidden></span>
+    </div>
+    <div class="tgroup">
+      <button id="zIn" title="Zoom in (Ctrl+=)">＋</button>
+      <button id="zOut" title="Zoom out (Ctrl+-)">－</button>
+      <button id="zSel" title="Zoom to selection">Sel</button>
+      <button id="zAll" title="Zoom full (Ctrl+0)">Full</button>
+    </div>
+    <div class="tgroup" id="mtTools" hidden></div>
+    <span class="spacer"></span>
+    <span id="fmtInfo"></span>
+  </div>
+
+  <div id="workspace">
+    <aside id="leftPanel" class="dock">
+      <div class="panel grow" id="pnlFiles"><h3>Files</h3><div id="fileList" class="plist"></div></div>
+      <div class="panel" id="pnlMarkers"><h3>Markers</h3><div id="markerList" class="plist small"></div></div>
+    </aside>
+
+    <main id="center">
+      <div id="waveMode" class="mode"></div>
+      <div id="multiMode" class="mode" hidden></div>
+    </main>
+
+    <aside id="rightPanel" class="dock">
+      <div class="panel" id="pnlSelView">
+        <h3>Selection / View</h3>
+        <table class="info">
+          <tr><th></th><th>Begin</th><th>End</th><th>Length</th></tr>
+          <tr><td>Sel</td><td id="iSelB">—</td><td id="iSelE">—</td><td id="iSelL">—</td></tr>
+          <tr><td>View</td><td id="iVwB">—</td><td id="iVwE">—</td><td id="iVwL">—</td></tr>
+        </table>
+      </div>
+      <div class="panel" id="videoPanel" hidden><h3>Video</h3><video id="videoEl" muted playsinline></video></div>
+      <div class="panel grow" id="pnlEffects">
+        <h3>Effects</h3>
+        <button id="vstBtn" class="sm" style="margin:6px 6px 0" title="Run an installed VST3 / AU effect plugin on the selection">VST3 / AU plugin…</button>
+        <input id="fxSearch" type="search" placeholder="Search effects…">
+        <div id="fxList" class="plist"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="dockBottom"></div>
+
+  <div id="transport">
+    <div class="tbtns">
+      <button id="bStart" title="Go to start (Home)"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+      <button id="bStop" title="Stop (Enter)"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10"/></svg></button>
+      <button id="bPlay" title="Play / Stop (Space)" class="big"><svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg></button>
+      <button id="bPause" title="Pause (Shift+Enter)"><svg viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg></button>
+      <button id="bEnd" title="Go to end (End)"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2l8 6-8 6z"/></svg></button>
+      <button id="bLoop" title="Loop (Ctrl+L)"><svg viewBox="0 0 16 16"><path d="M3 7a4 4 0 0 1 4-4h4V1l4 3-4 3V5H7a2 2 0 0 0-2 2zm10 2a4 4 0 0 1-4 4H5v2l-4-3 4-3v2h4a2 2 0 0 0 2-2z"/></svg></button>
+      <button id="bMetro" title="Metronome (Transport > Metronome Settings… for sound, level, count-in)"><svg viewBox="0 0 16 16"><path d="M6 1h4l3.2 13H2.8zM7 3l-2.3 9.5h6.6L9 3zm1.1 1.4 3.6-2.2.5.8-3.6 2.2-.3 4.8h-1z"/></svg></button>
+      <button id="bRec" title="Record (Shift+Space)" class="rec"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/></svg></button>
+    </div>
+    <div id="timeDisp" title="Click to change time format">0:00.000</div>
+    <canvas id="meters"></canvas>
+  </div>
+
+  <div id="statusbar"><span id="statusMsg">Ready</span></div>
+</div>
+
+<input type="file" id="fileInput" accept="audio/*,video/*,.wav,.mp3,.ogg,.flac,.m4a,.aac,.opus,.aif,.aiff,.mp4,.mov,.mkv,.webm" multiple hidden>
+<input type="file" id="sessionInput" accept=".asession,application/json" hidden>
+<div id="modalRoot"></div>
+<div id="toasts"></div>
+<div id="busy" hidden><div class="spin"></div><span>Working…</span><button class="btn" hidden>Cancel</button></div>
+
+<script src="js/dsp.js"></script>
+<script src="js/wav.js"></script>
+<script src="js/tags.js"></script>
+<script src="js/effects.js"></script>
+<script src="js/flac.js"></script>
+<script src="js/jobs.js"></script>
+<script src="js/webenc.js"></script>
+<script src="js/rack.js"></script>
+<script src="js/rack2.js"></script>
+<script src="js/rackpresets.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/keys.js"></script>
+<script src="js/workspaces.js"></script>
+<script src="js/favorites.js"></script>
+<script src="js/fxmenu.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/spectral.js"></script>
+<script src="js/waveview.js"></script>
+<script src="js/playx.js"></script>
+<script src="js/tempo.js"></script>
+<script src="js/metronome.js"></script>
+<script src="js/recording.js"></script>
+<script src="js/clipstretch.js"></script>
+<script src="js/routing.js"></script>
+<script src="js/envelope.js"></script>
+<script src="js/wavescale.js"></script>
+<script src="js/multitrack.js"></script>
+<script src="js/videotrack.js"></script>
+<script src="js/sessionio.js"></script>
+<script src="js/cdlayout.js"></script>
+<script src="js/interchange.js"></script>
+<script src="js/store.js"></script>
+<script src="js/autosave.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/tips.js"></script>
+<script src="js/prefs.js"></script>
+<script src="js/recent.js"></script>
+<script src="js/welcome.js"></script>
+<script src="js/updates.js"></script>
+<script src="js/speech.js"></script>
+<script src="js/runtimes.js"></script>
+<script src="js/vst.js"></script>
+<script src="js/app.js"></script>
+<script src="js/fxmodal.js"></script>
+<script src="js/rackpanel.js"></script>
+<script src="js/panels-ui.js"></script>
+</body>
+</html>
+
+
+

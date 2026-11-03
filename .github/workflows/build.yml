@@ -1,0 +1,61 @@
+# Builds the Windows installer and the Linux AppImage + .deb on GitHub Actions (free for public repositories) and runs
+# npm test on both. Run it from the Actions tab ("Run workflow") or push a tag v1.2.3 — a tag also attaches the files
+# to a draft GitHub Release (with latest.yml / latest-linux.yml for the automatic updates).
+name: build
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            dist: dist
+          - os: ubuntu-22.04
+            dist: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Linux packages for the tests (screen for the app tests, ffmpeg, espeak-ng, python3-venv)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg espeak-ng python3-venv
+      - name: npm test (Linux, virtual screen)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+      - name: npm test (Windows)
+        if: runner.os == 'Windows'
+        run: npm test
+      - run: npm run ${{ matrix.dist }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioStage-${{ runner.os }}
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest*.yml
+          if-no-files-found: error
+      - name: Attach to a draft release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest*.yml

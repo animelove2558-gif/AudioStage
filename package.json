@@ -1,0 +1,172 @@
+{
+  "name": "audiostage",
+  "version": "2.0.0",
+  "description": "AudioStage — professional audio editor and multitrack mixer",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "web": "node server.js",
+    "test": "node tests/run-all.js",
+    "setup:vst": "node tools/vst/setup.js",
+    "test:vst": "node tests/vst_host.test.js",
+    "dist": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:all": "electron-builder --win --linux --publish never",
+    "icons": "node tools/make-icons.js && node tools/make-ico.js"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "lamejs": "^1.2.1"
+  },
+  "license": "MIT",
+  "author": "BYS All Stages",
+  "homepage": "https://github.com/",
+  "build": {
+    "appId": "com.bys.audiostage",
+    "productName": "AudioStage",
+    "copyright": "Copyright (c) BYS & RB. All rights reserved by BYS & RB",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json",
+      "electron/**/*",
+      "app/**/*",
+      "tools/vst/vst_host.py",
+      "tools/vst/requirements.txt",
+      "tools/vst/setup.js",
+      "!**/.venv/**"
+    ],
+    "asarUnpack": [
+      "tools/vst/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AudioStage",
+      "uninstallDisplayName": "AudioStage",
+      "include": "build/installer.nsh"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icons",
+      "category": "AudioVideo;Audio;AudioVideoEditing",
+      "executableName": "audiostage",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "maintainer": "BYS All Stages <animelove2558@gmail.com>",
+      "vendor": "BYS All Stages",
+      "synopsis": "Audio editor and multitrack mixer",
+      "description": "AudioStage is a free, offline audio editor and multitrack mixer: waveform and spectral editing, effects rack, recording, multitrack sessions (.asession), VST3 plugins (optional) and export to WAV, MP3, FLAC, Opus and more.",
+      "mimeTypes": [
+        "application/x-audiostage-session",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/vnd.wave",
+        "audio/mpeg",
+        "audio/flac",
+        "audio/x-flac",
+        "audio/ogg",
+        "audio/x-vorbis+ogg",
+        "audio/opus",
+        "audio/x-opus+ogg",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/aac",
+        "audio/x-aac",
+        "audio/aiff",
+        "audio/x-aiff"
+      ],
+      "desktop": {
+        "Name": "AudioStage",
+        "GenericName": "Audio Editor",
+        "GenericName[th]": "โปรแกรมตัดต่อเสียง",
+        "Comment[th]": "ตัดต่อเสียงและมิกซ์มัลติแทร็ก",
+        "Keywords": "audio;sound;editor;wave;multitrack;mixer;record;"
+      }
+    },
+    "deb": {
+      "artifactName": "${productName}_${version}_amd64.${ext}",
+      "depends": [
+        "libgtk-3-0 | libgtk-3-0t64",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0 | libatspi2.0-0t64",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2 | libasound2t64"
+      ],
+      "recommends": [
+        "ffmpeg",
+        "python3-venv",
+        "espeak-ng"
+      ],
+      "priority": "optional",
+      "fpm": [
+        "build/linux/audiostage-session.xml=/usr/share/mime/packages/audiostage-session.xml",
+        "build/icons/16x16.png=/usr/share/icons/hicolor/16x16/mimetypes/application-x-audiostage-session.png",
+        "build/icons/24x24.png=/usr/share/icons/hicolor/24x24/mimetypes/application-x-audiostage-session.png",
+        "build/icons/32x32.png=/usr/share/icons/hicolor/32x32/mimetypes/application-x-audiostage-session.png",
+        "build/icons/48x48.png=/usr/share/icons/hicolor/48x48/mimetypes/application-x-audiostage-session.png",
+        "build/icons/64x64.png=/usr/share/icons/hicolor/64x64/mimetypes/application-x-audiostage-session.png",
+        "build/icons/128x128.png=/usr/share/icons/hicolor/128x128/mimetypes/application-x-audiostage-session.png",
+        "build/icons/256x256.png=/usr/share/icons/hicolor/256x256/mimetypes/application-x-audiostage-session.png",
+        "build/icons/512x512.png=/usr/share/icons/hicolor/512x512/mimetypes/application-x-audiostage-session.png"
+      ]
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}-x86_64.${ext}"
+    },
+    "fileAssociations": [
+      {
+        "ext": "asession",
+        "name": "AudioStage Session",
+        "description": "AudioStage multitrack session",
+        "role": "Editor",
+        "icon": "build/asession.ico"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "repo": "AudioStage",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
