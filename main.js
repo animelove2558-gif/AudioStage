@@ -98,7 +98,11 @@ ipcMain.handle('media:roots', wrap(() => {
   const roots = [];
   for (const [name, key] of [['Home', 'home'], ['Music', 'music'], ['Documents', 'documents'], ['Desktop', 'desktop'], ['Downloads', 'downloads']]) { try { const p = app.getPath(key); if (fs.existsSync(p)) roots.push({ name, path: p }); } catch (e) { /* folder not available */ } }
   if (process.platform === 'win32') for (const l of 'CDEFGHIJKLMNOPQRSTUVWXYZ') { const p = l + ':\\'; try { if (fs.existsSync(p)) roots.push({ name: 'Drive ' + l + ':', path: p }); } catch (e) { /* */ } }
-  else roots.push({ name: 'Computer (/)', path: '/' });
+  else { // Linux / macOS: USB sticks and extra disks are mounted under /media/<user> (udisks), /run/media/<user> or /mnt
+    let user = ''; try { user = require('os').userInfo().username; } catch (e) { /* */ }
+    for (const [name, p] of [['Removable media', user ? '/media/' + user : ''], ['Removable media', user ? '/run/media/' + user : ''], ['Mounted disks (/mnt)', '/mnt'], ['Volumes', '/Volumes']]) { try { if (p && fs.existsSync(p) && fs.readdirSync(p).length) roots.push({ name, path: p }); } catch (e) { /* not readable */ } }
+    roots.push({ name: 'Computer (/)', path: '/' });
+  }
   return { roots };
 }));
 ipcMain.handle('media:list', wrap((e, dir) => {

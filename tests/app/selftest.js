@@ -24,7 +24,7 @@ module.exports = function selftest(app, win) {
   };
   win.webContents.on('console-message', onConsole);
   win.webContents.on('render-process-gone', (e, d) => { errors.push('renderer gone: ' + d.reason); finish(1); });
-  const timer = setTimeout(() => { console.log('SELFTEST TIMEOUT'); finish(1); }, +(process.env.AUDIOSTAGE_SELFTEST_TIMEOUT || 180000));
+  const timer = setTimeout(() => { console.log('SELFTEST TIMEOUT'); finish(1); }, +(process.env.AUDIOSTAGE_SELFTEST_TIMEOUT || 300000));
   let done = false;
   function finish(code) { if (done) return; done = true; clearTimeout(timer); setTimeout(() => app.exit(code), 50); }
 

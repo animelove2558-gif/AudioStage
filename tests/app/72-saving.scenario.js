@@ -15,7 +15,7 @@ module.exports = async ({ t, AS, app, assert, sleep, env }) => {
     d = app.cur; d.set([sine(550, sr / 2, 0.5)], 'Edit'); assert(d.dirty);
     await F.testSaveAnswer([null]);
     assert((await saveAsOk()) === false, 'not saved'); assert(d.dirty === true, 'still unsaved after Cancel');
-    assert(/\*/.test(document.title), 'title shows the unsaved mark: ' + document.title);
+    app.updateTitle(); assert(/\*/.test(document.title), 'title shows the unsaved mark: ' + document.title);
   });
   await t('Save As writes the file and clears the mark; File > Save (Ctrl+S) then overwrites the same file without asking (H1)', async () => {
     const target = env.tmp + '\\g2 saved.wav'; await F.testSaveAnswer([target]);

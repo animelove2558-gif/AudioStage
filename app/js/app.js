@@ -109,7 +109,7 @@
     const el = $('#fileList');
     if (!app.docs.length) { el.innerHTML = '<div class="empty">No files open.<br>File &gt; Open… or drop audio here.</div>'; }
     else el.innerHTML = app.docs.map((d) => `<div class="fitem ${d === app.cur ? 'cur' : ''}" data-id="${d.id}" title="Double-click: insert into multitrack"><div class="fn">${UI.esc(d.name)}${d.dirty ? ' *' : ''}</div><div class="fm">${fmtTime(d.dur)} · ${d.sr / 1000} kHz · ${d.ch.length === 1 ? 'Mono' : d.ch.length === 2 ? 'Stereo' : d.ch.length + ' ch'}</div><button class="sm x" data-x="${d.id}" title="Close">×</button><button class="sm ins" data-i="${d.id}" title="Insert into multitrack">⊕</button></div>`).join('');
-    updateMarkers();
+    updateMarkers(); updateTitle();
   }
   $('#fileList').addEventListener('click', (e) => {
     const x = e.target.closest('[data-x]'), ins = e.target.closest('[data-i]'), it = e.target.closest('.fitem');
@@ -161,7 +161,7 @@
   /* ================= Mode ================= */
   function setMode(m) {
     if (eng.playing) stop(false);
-    app.mode = m;
+    app.mode = m; updateTitle();
     $('#waveMode').hidden = m !== 'wave'; $('#multiMode').hidden = m !== 'multi'; $('#mtTools').hidden = m !== 'multi';
     document.querySelectorAll('#modeSwitch button').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
     $('#specToggle').style.display = m === 'wave' ? '' : 'none';
@@ -1223,7 +1223,7 @@
     } catch (e) { if (e && e.cancelled) UI.toast('Opening cancelled.'); else UI.toast('Cannot open session: ' + e.message, 'error'); return false; }
   }
   /* title bar: the file being worked on + "*" when it has unsaved changes */
-  let lastTitle = '';
+  var lastTitle = ''; // (var: setMode may run before this line during start-up)
   function updateTitle() {
     const s = app.session, d = app.cur, multiMode = app.mode === 'multi';
     const name = multiMode ? (s ? (s.fileName || 'Untitled Session') + (s.dirty ? ' *' : '') : '') : d ? d.name + (d.dirty ? ' *' : '') : '';
@@ -1927,7 +1927,7 @@
     { id: 'edit.postRoll', tab: 'General', label: 'Preview Edit post-roll', type: 'range', min: 0, max: 10, step: 0.1, unit: 's', dflt: 2, ...via(EDS, 'postRoll', saveEDS), tip: '… and this much after it' },
     { id: 'audio.out', tab: 'Audio Hardware', label: 'Output device', type: 'select', options: () => devOpts('audiooutput'), dflt: '', get: () => eng.outId || '', set: (v) => { eng.outId = v; saveAudio(); if (eng.ctx && 'setSinkId' in eng.ctx) eng.ctx.setSinkId(v || '').catch((e) => UI.toast('Cannot use that output device: ' + e.message, 'error')); } },
     { id: 'audio.in', tab: 'Audio Hardware', label: 'Input device (recording)', type: 'select', options: () => devOpts('audioinput'), dflt: '', get: () => eng.inId || '', set: (v) => { eng.inId = v; saveAudio(); },
-      note: 'Devices are used through the operating system’s audio engine (WASAPI / CoreAudio). ASIO drivers cannot be opened directly — expose the interface as a system device (e.g. ASIO4ALL, or its WASAPI mode).' },
+      note: /Linux/i.test(navigator.platform || navigator.userAgent) ? 'Devices are used through the system sound server (PipeWire or PulseAudio). For JACK, install pipewire-jack and route AudioStage with a patchbay (qpwgraph, Helvum); JACK itself is not opened directly.' : 'Devices are used through the operating system’s audio engine (WASAPI / CoreAudio). ASIO drivers cannot be opened directly — expose the interface as a system device (e.g. ASIO4ALL, or its WASAPI mode).' },
     { id: 'rec.latencyMs', tab: 'Recording', label: 'Latency compensation', type: 'range', min: 0, max: 500, step: 0.1, unit: 'ms', dflt: 0, ...via(RS, 'latencyMs', saveRS), tip: 'Recordings are moved earlier by this much so overdubs line up (Transport > Recording Settings… can measure it)' },
     { id: 'rec.preRoll', tab: 'Recording', label: 'Punch pre-roll', type: 'range', min: 0, max: 10, step: 0.1, unit: 's', dflt: 2, ...via(RS, 'preRoll', saveRS) },
     { id: 'rec.postRoll', tab: 'Recording', label: 'Punch post-roll', type: 'range', min: 0, max: 10, step: 0.1, unit: 's', dflt: 1, ...via(RS, 'postRoll', saveRS) },
