@@ -1,7 +1,14 @@
 // The app boots, the main objects exist and a session renders offline.
-module.exports = async ({ t, AS, app, assert, near }) => {
+module.exports = async ({ t, AS, app, assert, near, sleep }) => {
   await t('app boots: AS / app / views exist', async () => {
     assert(AS && app && app.multi && app.wave, 'globals'); assert(AS.engine && AS.buildGraph && AS.renderMix, 'engine');
+  });
+  await t('About box: the real version (package.json via the main process) and the BYS & RB copyright line', async () => {
+    const v = await window.audioStageHelp.version(); assert(/^\d+\.\d+\.\d+/.test(v), v); await sleep(50);
+    AS.actions['help.about'](); const m = document.querySelector('.modal-back .modal'), txt = m.textContent;
+    assert(txt.includes('AudioStage ' + v), 'version ' + v + ' in ' + txt.slice(0, 80)); assert(!/AudioStage 1\.0\b/.test(txt) || v.startsWith('1.0'), 'stale version');
+    assert(txt.includes('Copyright (c) BYS & RB. All rights reserved by BYS & RB'), 'copyright');
+    m.querySelector('[data-act="cancel"]').click();
   });
   await t('About box lists registry counts and every export format', async () => {
     AS.actions['help.about']();

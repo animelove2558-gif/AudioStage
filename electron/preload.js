@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('audioStageOpen', {
 contextBridge.exposeInMainWorld('audioStageHelp', {
   open: (q) => ipcRenderer.invoke('help:open', q || ''),
   info: () => ipcRenderer.invoke('log:info'),
+  version: () => ipcRenderer.invoke('app:version'), // package.json version (About box)
   showLogs: () => ipcRenderer.invoke('log:show'),
   log: (level, msg) => ipcRenderer.invoke('log:write', level, msg),
   testEval: (js) => ipcRenderer.invoke('test:helpEval', js), // app tests only (refused otherwise)

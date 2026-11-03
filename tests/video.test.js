@@ -8,6 +8,8 @@ ok('mux command: copies the video stream, new AAC audio padded / cut to the vide
   const a = V.muxArgs('in.mp4', 'mix.wav', 'out.mp4', 192);
   const s = a.join(' ');
   assert(/-map 0:v:0 -map 1:a:0/.test(s) && /-c:v copy/.test(s) && /-c:a aac -b:a 192k/.test(s) && /-af apad -shortest/.test(s) && a[a.length - 1] === 'out.mp4', s);
+  assert(!a.includes('-t'), 'no -t without a known duration');
+  assert(/-shortest -t 62\.500 /.test(V.muxArgs('in.mp4', 'mix.wav', 'out.mp4', 192, 62.5).join(' ')), 'cut to the probed video length');
 });
 ok('probe parsing (ffmpeg -i output)', () => {
   const info = V.parseProbe('Input #0, mov,mp4\n  Duration: 00:01:02.50, start: 0\n  Stream #0:0[0x1](und): Video: h264 (High), yuv420p, 1280x720 [SAR 1:1], 25 fps\n  Stream #0:1[0x2](und): Audio: aac (LC), 48000 Hz, stereo\n');
@@ -25,8 +27,14 @@ else okAsync(`real mux with ffmpeg ${ff.version}: video untouched, new soundtrac
   // a 1 s WAV (shorter than the video): must be padded to the video's 2 s
   const sr = 8000, n = sr, buf = Buffer.alloc(44 + n * 2); buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write('WAVEfmt ', 8); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sr, 24); buf.writeUInt32LE(sr * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(n * 2, 40);
   for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(8000 * Math.sin(2 * Math.PI * 440 * i / sr)), 44 + i * 2);
+  const src = V.probe(ff.path, vid).duration, frame = 0.1; // 10 fps
   await V.mux(ff.path, vid, new Uint8Array(buf), out, 128);
-  const info = V.probe(ff.path, out); assert(info.video && info.audio, JSON.stringify(info)); assert(Math.abs(info.duration - 2) < 0.15, 'duration ' + info.duration);
+  const info = V.probe(ff.path, out); assert(info.video && info.audio, JSON.stringify(info)); assert(Math.abs(info.duration - src) <= frame + 1e-6, `duration ${info.duration} vs video ${src}`);
+  assert(!fs.readdirSync(dir).some((f) => /partial/.test(f)), 'no partial file left');
+  // a 3 s WAV (longer than the video): cut to the video's length, within one frame
+  const n3 = 3 * sr, b3 = Buffer.alloc(44 + n3 * 2); buf.copy(b3, 0, 0, 44); b3.writeUInt32LE(36 + n3 * 2, 4); b3.writeUInt32LE(n3 * 2, 40);
+  await V.mux(ff.path, vid, new Uint8Array(b3), out, 128);
+  const i3 = V.probe(ff.path, out); assert(Math.abs(i3.duration - src) <= frame + 1e-6, `long audio: ${i3.duration} vs video ${src}`);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 done();

@@ -64,5 +64,13 @@ module.exports = async ({ t, AS, app, assert, sleep, env }) => {
     assert(a.ok && b.ok && a.name === 'g6 same.wav' && b.name === 'g6 same (2).wav', JSON.stringify([a, b]));
     const e = await F.exists(env.tmp, ['g6 same.wav', 'g6 other.wav']); assert(e.existing.length === 1 && e.existing[0] === 'g6 same.wav');
   });
+  await t('exports of linked files (CUE + WAV …) into a folder that has them already: asked, Cancel writes nothing, Replace replaces', async () => {
+    const dir = env.tmp + '\\g6 linked', files = (v) => [{ name: 'x.wav', data: new Uint8Array([v]) }, { name: 'x.cue', data: 'FILE "x.wav" WAVE' }];
+    assert(await app.saveFiles(files(1), { dir }));
+    let p = app.saveFiles(files(2), { dir }); assert(await until(() => modal() && /already/.test(modal().textContent)), 'asked'); assert(!modal().querySelector('[data-act="x:keep"]'), 'no Keep Both for linked files');
+    modal().querySelector('[data-act="cancel"]').click(); assert((await p) === null); assert((await F.read(dir + '\\x.wav', 0, 1)).data[0] === 1, 'unchanged');
+    p = app.saveFiles(files(3), { dir }); assert(await until(() => modal() && /already/.test(modal().textContent))); modal().querySelector('[data-act="ok"]').click(); assert(await p);
+    assert((await F.read(dir + '\\x.wav', 0, 1)).data[0] === 3, 'replaced'); assert(!(await F.exists(dir, ['x (2).wav'])).existing.length);
+  });
   await t('clean up', async () => { for (const x of app.docs) x.dirty = false; app.session.dirty = false; AS.actions['file.closeall'](); await sleep(50); app.setMode('wave'); });
 };

@@ -17,6 +17,7 @@ log.write('info', `AudioStage ${app.getVersion()} started (Electron ${process.ve
 process.on('uncaughtException', (e) => { log.write('error', e); if (!SELFTEST) dialog.showErrorBox('AudioStage', 'An unexpected error happened: ' + e.message + '\n\nDetails are in the log file (Help > Show Log Files).'); });
 process.on('unhandledRejection', (e) => log.write('error', e));
 app.on('child-process-gone', (e, d) => log.write('warn', `${d.type} process gone: ${d.reason} (exit ${d.exitCode})`));
+ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('log:info', () => ({ ok: true, info: systemInfo({ version: app.getVersion(), packaged: app.isPackaged }), dir: log.dir, tail: log.tail(40) }));
 ipcMain.handle('log:show', wrapLater((e) => { fs.mkdirSync(log.dir, { recursive: true }); return SELFTEST ? { dir: log.dir } : shell.openPath(log.dir).then((err) => { if (err) throw new Error(err); return { dir: log.dir }; }); }));
 ipcMain.handle('log:write', (e, level, msg) => { log.write(level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info', 'renderer: ' + String(msg).slice(0, 4000)); return true; });

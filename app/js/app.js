@@ -598,20 +598,29 @@
   /* Export Ranges: every range marker (or the chosen ones) as its own file. o: {fmt, template, ids, dir} (dir: desktop
      folder, chosen with a dialog when missing). Names: {file} {marker} {n} in the template. */
   const safeName = (s) => String(s).replace(/[\\/:*?"<>|\x00-\x1f]+/g, '_').replace(/^\.+/, '').trim().slice(0, 150) || 'untitled';
+  /* before writing several files into a folder: some names exist already → ask. → { overwrite } | null (cancel).
+     linked = the files refer to each other by name (CUE + WAV, XML + media): only Replace or Cancel */
+  async function askOverwrite(dir, names, linked) {
+    const api = window.audioStageFiles; if (!api || !api.exists) return { overwrite: false };
+    const r = await api.exists(dir, names); if (!r.ok || !r.existing.length) return { overwrite: false };
+    const list = r.existing.slice(0, 8).map((n) => '<li>' + UI.esc(n) + '</li>').join('') + (r.existing.length > 8 ? `<li>… and ${r.existing.length - 8} more</li>` : '');
+    const a = await UI.dialog({ title: 'Files already exist', width: 480, okLabel: 'Replace', extraButtons: linked ? [] : [{ id: 'keep', label: 'Keep Both' }],
+      html: `<p>${r.existing.length} file(s) with these names are already in ${UI.esc(dir)}:</p><ul>${list}</ul><div class="note">${linked ? 'Replace them, or Cancel and choose another folder.' : 'Keep Both adds “ (2)” to the new files’ names.'}</div>` });
+    if (a === 'keep') return { overwrite: false };
+    return a ? { overwrite: true } : null;
+  }
   async function exportRanges(o) {
     const d = app.cur; if (!d) return null;
     const R = d.ranges().filter((r) => !o.ids || o.ids.includes(r.id)); if (!R.length) { UI.toast('There are no range markers (select a range and press M).'); return null; }
     const f = FORMATS[o.fmt || 'wav24'], base = d.name.replace(/\.\w+$/, ''), files = window.audioStageFiles;
     let dir = o.dir || null;
     if (files && !dir) { const r = await files.pickFolder('Export ranges to folder'); if (!r.ok || !r.dir) return null; dir = r.dir; }
-    const names = [], used = new Set();
+    const names = [], used = new Set(), planned = R.map((r, i) => { let name = safeName((o.template || '{file} - {marker}').replace(/\{file\}/g, base).replace(/\{marker\}/g, r.name).replace(/\{n\}/g, String(i + 1).padStart(2, '0'))); while (used.has(name.toLowerCase())) name += '_'; used.add(name.toLowerCase()); return name + '.' + f.ext; });
+    const ow = files ? await askOverwrite(dir, planned, false) : { overwrite: false }; if (!ow) return null;
     for (let i = 0; i < R.length; i++) {
-      const r = R[i]; let name = safeName((o.template || '{file} - {marker}').replace(/\{file\}/g, base).replace(/\{marker\}/g, r.name).replace(/\{n\}/g, String(i + 1).padStart(2, '0')));
-      while (used.has(name.toLowerCase())) name += '_'; used.add(name.toLowerCase());
+      const r = R[i], file = planned[i];
       const buf = await encodeBytes(D.sliceCh(d.ch, r.a, r.b), d.sr, o.fmt || 'wav24', true, `Exporting ${i + 1}/${R.length}: ${r.name}`);
-      const file = name + '.' + f.ext;
-      if (files) { const w = await files.write(dir, file, new Uint8Array(buf)); if (!w.ok) throw new Error(w.error); } else download(buf, file, f.mime);
-      names.push(file);
+      if (files) { const w = await files.write(dir, file, new Uint8Array(buf), ow); if (!w.ok) throw new Error(w.error); names.push(w.name || file); } else { download(buf, file, f.mime); names.push(file); }
     }
     status(`Exported ${names.length} range(s)${dir ? ' to ' + dir : ''}.`); return { dir, names };
   }
@@ -620,7 +629,9 @@
   async function saveFiles(files, o) {
     const api = window.audioStageFiles; let dir = (o && o.dir) || null;
     if (api && !dir) { const r = await api.pickFolder((o && o.title) || 'Choose a folder'); if (!r.ok || !r.dir) return null; dir = r.dir; }
-    for (const f of files) { if (api) { const w = await api.write(dir, f.name, typeof f.data === 'string' ? f.data : new Uint8Array(f.data)); if (!w.ok) throw new Error(w.error); } else download(f.data, f.name, f.mime); }
+    const ow = api ? await askOverwrite(dir, files.map((f) => f.name), files.length > 1) : { overwrite: false }; if (!ow) return null; // (several files refer to each other by name)
+    if (api && files.length > 1) ow.overwrite = true;
+    for (const f of files) { if (api) { const w = await api.write(dir, f.name, typeof f.data === 'string' ? f.data : new Uint8Array(f.data), ow); if (!w.ok) throw new Error(w.error); } else download(f.data, f.name, f.mime); }
     return { dir, names: files.map((f) => f.name) };
   }
   app.saveFiles = saveFiles;
@@ -1458,8 +1469,7 @@
         if (o.fmt !== 'none') {
           const base = d.name.replace(/\.\w+$/, ''), f = FORMATS[o.fmt], name = F.fileName(AS.tags.fillTemplate(o.template || '{name}_processed', d.meta, base), { name: base, n, fav: o.label, ext: f.ext });
           const buf = await encodeBytes(d.ch, d.sr, o.fmt, true, `Exporting ${n}/${docs.length}: ${name}`, d.meta ? { tags: d.meta } : null);
-          if (files) { const w = await files.write(dir, name, new Uint8Array(buf)); if (!w.ok) throw new Error(w.error); } else download(buf, name, f.mime);
-          written.push(name);
+          if (files) { const w = await files.write(dir, name, new Uint8Array(buf)); if (!w.ok) throw new Error(w.error); written.push(w.name || name); } else { download(buf, name, f.mime); written.push(name); } // (an existing file is kept: the new one gets " (2)")
         }
       }
       status(`Batch finished: ${n} file(s) processed${written.length ? ', ' + written.length + ' exported' + (dir ? ' to ' + dir : '') : ''}.`);
@@ -1869,9 +1879,13 @@
     const rows = [['Space', 'Play / Stop'], ['Shift+Space', 'Record'], ['Ctrl+Z / Ctrl+Y', 'Undo / Redo'], ['Ctrl+X / C / V', 'Cut / Copy / Paste'], ['Ctrl+Shift+V', 'Mix Paste'], ['Delete', 'Delete selection / clip'], ['Ctrl+A', 'Select all'], ['Ctrl+= / Ctrl+-', 'Zoom in / out'], ['Mouse wheel', 'Scroll'], ['Ctrl+Wheel', 'Zoom at pointer'], ['Double-click', 'Select visible range'], ['M', 'Add marker at playhead (range marker over a selection)'], ['Ctrl+L', 'Toggle loop'], ['J / K / L', 'Shuttle reverse / stop / forward (again = faster, hold K = half speed)'], ['Drag in the ruler', 'Scrub (hear the audio under the playhead)'], ['Home / End', 'Go to start / end'], ['S', 'Split clip at playhead (multitrack)'], ['Ctrl+D', 'Duplicate clip'], ['Ctrl+S', 'Save as WAV']];
     UI.dialog({ title: 'Keyboard Shortcuts', noOk: true, cancelLabel: 'Close', dismissable: true, html: '<table class="stats">' + rows.map((r) => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td></tr>`).join('') + '</table>' });
   }
+  /* the version comes from package.json through the main process (app.getVersion()), so it never goes stale */
+  let appVersion = '';
+  if (window.audioStageHelp && window.audioStageHelp.version) window.audioStageHelp.version().then((v) => { appVersion = typeof v === 'string' ? v : ''; }).catch(() => {});
+  const COPYRIGHT = 'Copyright (c) BYS & RB. All rights reserved by BYS & RB';
   function showAbout() {
     const n = AS.fxmenu.counts();
-    UI.dialog({ title: 'About AudioStage', noOk: true, cancelLabel: 'Close', dismissable: true, html: `<p><b>AudioStage 1.0</b> — a professional-style digital audio workstation for editing, restoring and mixing audio.</p><p class="note">Waveform &amp; spectral editor · multitrack mixer · ${n.realtime} real-time rack effects · ${n.offline} offline processes · ${n.generators} generators · restoration · loudness &amp; analysis tools<br>Export: ${exportFormatNames().join(' / ')} · Import: WAV and anything the system decoder reads (MP3, FLAC, OGG, M4A/AAC, Opus, video soundtracks…)</p>` });
+    UI.dialog({ title: 'About AudioStage', noOk: true, cancelLabel: 'Close', dismissable: true, html: `<p><b>AudioStage${appVersion ? ' ' + UI.esc(appVersion) : ''}</b> — a professional-style digital audio workstation for editing, restoring and mixing audio.</p><p class="note">Waveform &amp; spectral editor · multitrack mixer · ${n.realtime} real-time rack effects · ${n.offline} offline processes · ${n.generators} generators · restoration · loudness &amp; analysis tools<br>Export: ${exportFormatNames().join(' / ')} · Import: WAV and anything the system decoder reads (MP3, FLAC, OGG, M4A/AAC, Opus, video soundtracks…)</p><p class="note about-copy">${UI.esc(COPYRIGHT)}</p>` });
   }
   function toggleTheme() { AS.prefs.set('general.theme', document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'); }
   /* ================= Preferences (Edit > Preferences…, Ctrl+K) =================
