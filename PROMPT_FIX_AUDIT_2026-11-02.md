@@ -14,17 +14,17 @@
 
 ## A. บั๊กที่ต้องแก้
 
-### ☐ A1 — หน้า About ยังเขียนว่า "AudioStage 1.0" ทั้งที่เวอร์ชันจริงคือ 2.0.0
+### ☑ A1 — หน้า About ยังเขียนว่า "AudioStage 1.0" ทั้งที่เวอร์ชันจริงคือ 2.0.0
 - ที่: `app/js/app.js` ฟังก์ชัน `showAbout()` (ประมาณบรรทัด 1736–1738) เขียนตายตัวว่า `<b>AudioStage 1.0</b>`
 - แก้: อ่านเวอร์ชันจริงจาก main process (`app.getVersion()` — มี `log:info` คืน `info.version` อยู่แล้ว หรือเพิ่ม IPC `app:version`) แล้วแสดงแทน
 - เพิ่มบรรทัดลิขสิทธิ์ในหน้า About ให้เหมือนโปรแกรมอื่นในชุด: `Copyright (c) BYS & RB. All rights reserved by BYS & RB` (ตอนนี้ About ของ AudioStage ไม่มีบรรทัดนี้เลย)
 - เกณฑ์ผ่าน: เปลี่ยน `version` ใน `package.json` แล้ว About เปลี่ยนตามเอง
 
-### ☐ A2 — คู่มือในแอป (Help) เก่ากว่า README
+### ☑ A2 — คู่มือในแอป (Help) เก่ากว่า README
 - ที่: `app/help/index.html` ยังเป็น "AudioStage 1.0.0 — คู่มือ" แต่ README/package เป็น 2.0.0 → `tests/help.test.js` fail
 - แก้: รัน `node tools/make-help.js` ใหม่ และเพิ่มขั้นนี้ลงใน script `dist` (เช่น `"predist": "node tools/make-help.js"`) เพื่อไม่ให้ลืมอีก
 
-### ☐ A3 — ระบบอัปเดตอัตโนมัติใช้ไม่ได้จริง
+### ☑ A3 — ระบบอัปเดตอัตโนมัติใช้ไม่ได้จริง
 - ที่: `package.json` → `build.publish` เป็น GitHub `repo: "AudioStage"` แต่ **ไม่มี `owner`** และ `"homepage": "https://github.com/"` เป็นค่าว่างๆ
 - ผล: electron-builder ไม่สร้าง `app-update.yml` → เมนู Check for Updates ใช้ไม่ได้ในตัวที่ติดตั้ง
 - โฟลเดอร์ AudioStage **ยังไม่มี git repo** เลย (ไม่มี `.git`) ดังนั้น `.github/workflows/build.yml` ก็ยังไม่เคยรันได้
@@ -33,17 +33,17 @@
   - หรือใส่ `owner` จริง + `git init` + สร้าง repo
 - แก้ `homepage` ให้เป็น URL จริง (ตอนนี้เป็น `https://github.com/` เปล่าๆ) — ถามเจ้าของว่าจะใช้ URL ไหน
 
-### ☐ A4 — ส่งเสียงกลับเข้าวิดีโอ (Video track → mux) ได้ไฟล์ยาวเกินวิดีโอเดิม
+### ☑ A4 — ส่งเสียงกลับเข้าวิดีโอ (Video track → mux) ได้ไฟล์ยาวเกินวิดีโอเดิม
 - ที่: `electron/video.js` บรรทัด ~23 ใช้ `-af apad -shortest` คู่กับ `-c:v copy`
 - ผล: ffmpeg หยุดช้ากว่าความยาววิดีโอ (ทดสอบได้ 2.18 วินาทีจากวิดีโอ 2 วินาที) → `tests/video.test.js` fail และไฟล์ที่ได้มีเสียงเกินท้ายวิดีโอ
 - แก้: probe ความยาววิดีโอก่อน (มี `probe()` อยู่แล้ว) แล้วใช้ `-t <duration>` แทน `-shortest` (หรือใช้ทั้งคู่) ให้ความยาวผลลัพธ์ต่างจากวิดีโอเดิมไม่เกิน 1 เฟรม
 
-### ☐ A5 — license ขัดกันเอง
+### ☑ A5 — license ขัดกันเอง
 - `package.json` เขียน `"license": "MIT"` แต่ `build.copyright` เขียน "All rights reserved by BYS & RB" และโปรแกรมอื่นในชุดเป็น `"UNLICENSED"`
 - MIT แปลว่าใครก็เอาโค้ดไปใช้/ขายต่อได้ → ถ้าเจ้าของไม่ได้ตั้งใจ ให้เปลี่ยนเป็น `"UNLICENSED"` ให้ตรงกับโปรแกรมอื่น (ถามเจ้าของก่อน)
 - `author` ให้ตรงกับชุด (EditorStage ใช้ `"BYS & RB"`)
 
-### ☐ A6 — ตัวติดตั้งที่มีอยู่เก่ากว่าโค้ด
+### ☑ A6 — ตัวติดตั้งที่มีอยู่เก่ากว่าโค้ด
 - `dist/AudioStage Setup 2.0.0.exe` สร้างวันที่ 28 ต.ค. แต่ `package.json` ถูกแก้อีกครั้งวันที่ 1 พ.ย. (ข้อความลิขสิทธิ์) → ตัวติดตั้งที่แจกตอนนี้ยังไม่มีการแก้นี้
 - หลังแก้ข้อ A1–A5 แล้ว build ใหม่ (`npm test` → `npm run dist`) และลบ/ย้าย `AudioStage Setup 1.0.0.exe` เก่าออกจาก `dist/` เพื่อไม่ให้อัปโหลดผิดตัว
 
@@ -51,24 +51,24 @@
 
 ## B. ความปลอดภัย / ความเรียบร้อย
 
-### ☐ B1 — หน้าต่างหลักไม่มีตัวกันการเปิดหน้าใหม่ / เปลี่ยนหน้า
+### ☑ B1 — หน้าต่างหลักไม่มีตัวกันการเปิดหน้าใหม่ / เปลี่ยนหน้า
 - ที่: `main.js` `createWindow()` (~บรรทัด 280) มี `setWindowOpenHandler` เฉพาะหน้าต่าง Help
 - แก้: ใส่ `win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))` (ลิงก์ http/https ให้ `shell.openExternal`) และ `win.webContents.on('will-navigate', e => e.preventDefault())` ยกเว้นหน้า `app/index.html` เอง
 - กันกรณีลากไฟล์ .html / ลิงก์ในข้อความ metadata แล้วหน้าต่างหลักถูกเปลี่ยนเป็นหน้าอื่นที่ยังเข้าถึง preload API ได้
 
-### ☐ B2 — F12 เปิด DevTools ได้ในตัวที่ติดตั้งแล้ว
+### ☑ B2 — F12 เปิด DevTools ได้ในตัวที่ติดตั้งแล้ว
 - ที่: `main.js` ~บรรทัด 287
 - แก้: เปิดได้เฉพาะ `!app.isPackaged` หรือเมื่อเปิดโหมดนักพัฒนาใน Preferences
 
-### ☐ B3 — dependency ที่ไม่ได้ใช้
+### ☑ B3 — dependency ที่ไม่ได้ใช้
 - `lamejs` อยู่ใน `dependencies` แต่โค้ดใช้ไฟล์ `app/vendor/lame.min.js` ตลอด (ไม่มี `require('lamejs')`) → electron-builder จะแพ็ก node_modules/lamejs เข้าไปเปล่าๆ
 - แก้: ย้ายไป `devDependencies` หรือเอาออก (เก็บ LICENSE ของ lamejs ไว้ในไฟล์ notices)
 
 ---
 
 ## C. เอกสารที่ไม่ตรงกับของจริง
-- ☐ `ROADMAP-LINUX.md` ติ๊ก `[ ]` เกือบทั้งหมด แต่ใน `package.json` มี `build.linux`, `dist:linux`, `.deb`, MIME `.asession` แล้ว → ไล่ตรวจของจริงแล้วติ๊กให้ตรง ข้อที่ยังไม่ได้ทำจริงให้ทำต่อ (Media Browser บน Linux, PipeWire/JACK, espeak-ng, ทดสอบ AppImage/.deb บน Ubuntu จริง)
-- ☐ `ROADMAP-MISSING.md` หัวข้อ 12 (version, npm test → dist, ตรวจตัวแพ็ก, สรุปท้ายไฟล์) ยังไม่ได้ทำ — ทำพร้อมข้อ A6
+- ☑ `ROADMAP-LINUX.md` ติ๊ก `[ ]` เกือบทั้งหมด แต่ใน `package.json` มี `build.linux`, `dist:linux`, `.deb`, MIME `.asession` แล้ว → ไล่ตรวจของจริงแล้วติ๊กให้ตรง ข้อที่ยังไม่ได้ทำจริงให้ทำต่อ (Media Browser บน Linux, PipeWire/JACK, espeak-ng, ทดสอบ AppImage/.deb บน Ubuntu จริง)
+- ☑ `ROADMAP-MISSING.md` หัวข้อ 12 (version, npm test → dist, ตรวจตัวแพ็ก, สรุปท้ายไฟล์) ยังไม่ได้ทำ — ทำพร้อมข้อ A6
 
 ---
 
@@ -112,58 +112,95 @@
 
 ## G. บั๊กที่พบเพิ่ม (ทำก่อนหมวด D)
 
-### ☐ G1 — ✅ยืนยัน ไอคอนโปรแกรม/ไฟล์ `.asession` เป็นโลโก้เก่า → `npm test` ไม่ผ่าน 2 ไฟล์
+### ☑ G1 — ✅ยืนยัน ไอคอนโปรแกรม/ไฟล์ `.asession` เป็นโลโก้เก่า → `npm test` ไม่ผ่าน 2 ไฟล์
 - `build/icon.png` (โลโก้ใหม่ 28 ต.ค.) ใหม่กว่า `build/icons/*.png` (27 ต.ค.) และ `build/asession.ico` มีแค่ขนาด 16 px (567 ไบต์)
 - `tests/assoc.test.js`: asession.ico ต้องมี 16/24/32/48/64/128/256 px แต่มีแค่ 16; `tests/linux.test.js`: `16x16.png is up to date with the logo` ไม่ผ่าน
 - แก้: `npm run icons` แล้วรัน test ใหม่ (และ build ตัวติดตั้งใหม่ในข้อ A6 — ตัวติดตั้ง 2.0.0 ที่มีอยู่ใช้ไอคอนเก่า)
 
-### ☐ G2 — 🔴 🔎 Save As แล้วกด Cancel ในหน้าต่างเลือกที่บันทึก = ไฟล์ถูกนับว่า "บันทึกแล้ว"
+### ☑ G2 — 🔴 🔎 Save As แล้วกด Cancel ในหน้าต่างเลือกที่บันทึก = ไฟล์ถูกนับว่า "บันทึกแล้ว"
 - ที่: `app/js/app.js` `exportDoc()` บรรทัด 1031: `await encodeDownload(...)` แล้ว `d.dirty = false` ทันที — แต่ `download()` แค่สั่ง `<a download>.click()` (Electron เปิดหน้าต่าง Save ของ download) ไม่รู้ว่าผู้ใช้กด Save หรือ Cancel หรือเขียนไม่สำเร็จ
 - ผล: แก้ไฟล์ → Ctrl+S → กด Cancel → จุด "ยังไม่บันทึก" หาย → ปิดไฟล์/ปิดโปรแกรมไม่ถาม → งานหาย
 - แก้: ทำ IPC `files:saveAs` ใน main (dialog.showSaveDialog + เขียนไฟล์ + คืน path หรือ null) แล้วตั้ง `dirty=false` เฉพาะเมื่อเขียนสำเร็จ; จำ path ไว้ให้ Ctrl+S ครั้งถัดไปบันทึกทับไฟล์เดิมได้ (ตอนนี้ Ctrl+S = Save As ทุกครั้ง) — ใช้กับ Export Mixdown, Save Session, Batch ด้วย
 
-### ☐ G3 — 🔴 🔎 Multitrack ไม่มีสถานะ "ยังไม่บันทึก" เลย → ปิดโปรแกรม / เปิด session อื่น ทับงานโดยไม่ถาม
+### ☑ G3 — 🔴 🔎 Multitrack ไม่มีสถานะ "ยังไม่บันทึก" เลย → ปิดโปรแกรม / เปิด session อื่น ทับงานโดยไม่ถาม
 - ที่: `app.js` บรรทัด 1970 `beforeunload` ตรวจแค่ `app.docs.some(d => d.dirty)` (ไฟล์ Waveform); `useSession()` / `loadSession()` (บรรทัด 1094–1098) แทนที่ `app.session` ทันที; `Session` ไม่มี `dirty`
 - ผล: ทำ multitrack หลายชั่วโมง → ปิดหน้าต่าง → ปิดเลยไม่ถาม (และ `pagehide` ลบ crash marker ทิ้ง → เปิดใหม่ไม่เสนอกู้คืนด้วย ทั้งที่ autosave.json ยังอยู่); File > Open Multitrack Session… ทับ session ที่ยังไม่บันทึกทันที
 - แก้: `session.dirty` (ตั้งเมื่อ `session.push()` / undo / redo, ล้างเมื่อ Save Session สำเร็จ — ข้อ G2) + ใช้ใน `beforeunload`, `loadSession`, New Session, และหน้า Welcome; แสดง "*" ที่ชื่อ session
 
-### ☐ G4 — 🔴 🧮 Session ที่มีเสียงรวมเกิน ~17 นาที (stereo 48 kHz) บันทึกเป็น `.asession` ไม่ได้
+### ☑ G4 — 🔴 🧮 Session ที่มีเสียงรวมเกิน ~17 นาที (stereo 48 kHz) บันทึกเป็น `.asession` ไม่ได้
 - ที่: `app/js/sessionio.js` `serialize()` เก็บเสียงทุก source เป็น base64 ของ Float32 ใน JSON ก้อนเดียว → `JSON.stringify` ใน `saveSession()` (`app.js` บรรทัด 1092)
 - คำนวณ: ความยาว string สูงสุดของ V8 ≈ 536 ล้านตัวอักษร = Float32 ~402 MB ≈ 17.5 นาที stereo 48 kHz (รวมทุกคลิป/take/frozen track) → เกินแล้ว `RangeError: Invalid string length` = กด Save Session แล้วไม่ได้ไฟล์ (พอดแคสต์ 1 ชั่วโมงบันทึกไม่ได้เลย); ต่ำกว่านั้นก็ใช้หน่วยความจำ ~3 เท่าของเสียงระหว่างบันทึก และ `file.text()` ตอนเปิดก็ติดเพดานเดียวกัน — **ยังไม่ได้รันกับไฟล์จริง** (เครื่องตรวจหน่วยความจำไม่พอ) ให้ทดสอบด้วย session 20 นาทีก่อนแก้
 - แก้: รูปแบบ `.asession` v4 = zip (หรือโฟลเดอร์ `<name> Files/`) ที่มี `session.json` + ไฟล์เสียงแยก (WAV/FLAC 32f) เขียนแบบ stream ผ่าน main process; ยังเปิดไฟล์ v1–v3 ได้ (`migrate`)
 - เกณฑ์ผ่าน: session 2 ชั่วโมง stereo บันทึก/เปิดได้ + test round-trip
 
-### ☐ G5 — 🔴 🔎 Undo ของไฟล์ Waveform ไม่จำกัดหน่วยความจำ
+### ☑ G5 — 🔴 🔎 Undo ของไฟล์ Waveform ไม่จำกัดหน่วยความจำ
 - ที่: `app/js/engine.js` `Doc.set()` เก็บ 40 step โดยแต่ละ step ถือ array เสียงทั้งไฟล์ (effect ทั้งไฟล์ = สำเนาใหม่ทั้งก้อน)
 - ผล: ไฟล์ 1 ชั่วโมง stereo 48 kHz = ~1.4 GB ต่อสำเนา → ใส่ effect ไม่กี่ครั้งหน่วยความจำเต็ม renderer แครช (และงานที่ยังไม่บันทึกหาย)
 - แก้: งบ undo เป็นไบต์ (เช่น ¼ ของ RAM, สูงสุด 1.5 GB) ทิ้ง step เก่าสุดก่อน + แจ้งผู้ใช้ครั้งเดียว; step ที่แก้แค่ช่วงเลือกเก็บเฉพาะช่วงนั้น (diff) แทนทั้งไฟล์ — ตัวอย่างงบไบต์: `PDFStage/src/Core/history.js`
 
-### ☐ G6 — 🔎 Save back to EditorStage เขียนทับไฟล์ตรงๆ
+### ☑ G6 — 🔎 Save back to EditorStage เขียนทับไฟล์ตรงๆ
 - ที่: `main.js` `extedit:save` (บรรทัด 273–277) `fs.writeFileSync(p, …)`; `files:write` (บรรทัด 203–211) ก็เขียนทับตรงๆ และเขียนทับไฟล์ชื่อซ้ำในโฟลเดอร์ปลายทางโดยไม่ถาม
 - ผล: แครช/ดิสก์เต็มระหว่างเขียน = ไฟล์ WAV ที่ EditorStage ใช้บน timeline เสีย; Export Ranges / CD Layout ทับไฟล์เดิมที่ชื่อซ้ำเงียบๆ
 - แก้: เขียน `.tmp` → fsync → rename แบบเดียวกับ `store:put` ที่มีอยู่แล้ว (บรรทัด 222) และถามก่อนทับไฟล์ที่มีอยู่ (หรือเติม " (2)")
 
-### ☐ G7 — 🔎 File > Open หลายไฟล์ใหญ่พร้อมกัน = อ่านทั้งหมดเข้าหน่วยความจำในครั้งเดียว
+### ☑ G7 — 🔎 File > Open หลายไฟล์ใหญ่พร้อมกัน = อ่านทั้งหมดเข้าหน่วยความจำในครั้งเดียว
 - ที่: `main.js` `files:open` (บรรทัด 193–199) อ่านทุกไฟล์ที่เลือก (ไฟล์ละไม่เกิน 1.5 GB) เป็น `Uint8Array` แล้วส่งผ่าน IPC ก้อนเดียว
 - ผล: เลือกไฟล์ใหญ่ 5–10 ไฟล์ = ใช้หลาย GB พร้อมกัน → แครช
 - แก้: คืนแค่ path + ขนาด แล้วให้ renderer อ่านทีละไฟล์ (ผ่าน `open:read` แบบเดียวกับไฟล์จาก Explorer) พร้อมแถบ progress / ยกเลิกได้
 
-### ☐ G8 — 🔎 ปิดโปรแกรมแบบปกติแล้วไม่มี crash recovery ของ multitrack
+### ☑ G8 — 🔎 ปิดโปรแกรมแบบปกติแล้วไม่มี crash recovery ของ multitrack
 - เกี่ยวกับ G3: crash marker ถูกลบใน `pagehide` เสมอ แม้ผู้ใช้กด "Close Without Saving" ด้วยความเผลอ → หลังแก้ G3 แล้ว ให้เก็บ autosave ล่าสุดไว้อีกระยะ (เช่น เมนู File > Recover Last Session…) แทนการลบทิ้งทันที
 
-### ☐ G9 — 🔎 การบันทึกเสียง (Record) อยู่ในหน่วยความจำจนกด Stop
+### ☑ G9 — 🔎 การบันทึกเสียง (Record) อยู่ในหน่วยความจำจนกด Stop
 - `recording.js` ประกอบ take จาก capture ทั้งก้อนหลังหยุดบันทึก → ถ้าแอปแครช/ไฟดับระหว่างอัดยาว take ทั้งหมดหาย
 - แก้ (ควรตรวจในแอปก่อน): เขียน capture ลงดิสก์ระหว่างอัด (`store:put` เป็นช่วงๆ หรือ stream WAV ผ่าน main) แล้วกู้คืนได้ตอนเปิดใหม่
 
-### ☐ G10 — 🔎 หน้า About / Help / version ไม่ตรงกันหลายจุด (ต่อจาก A1–A2)
+### ☑ G10 — 🔎 หน้า About / Help / version ไม่ตรงกันหลายจุด (ต่อจาก A1–A2)
 - `package.json` `author` = "BYS All Stages" แต่ `build.copyright` = "BYS & RB" และ EditorStage ใช้ "BYS & RB" — เลือกให้ตรงกันทั้งชุดพร้อมข้อ A5
 - `ROADMAP-*.md` ยังอ้างเวอร์ชัน 1.x หลายจุด — ตรวจพร้อมข้อ C
 
 ## H. สิ่งที่ควรเพิ่ม (นอกเหนือจาก D)
-1. ☐ Save (Ctrl+S) บันทึกทับไฟล์เดิม / Save As เลือกที่ใหม่ (ตอนนี้ทุกการบันทึกเป็น download ใหม่ — ชื่อ session เป็น `Session.asession` ทุกครั้ง)
-2. ☐ ชื่อ session + "*" ใน title bar, รายการ Recent Sessions จำ path จริงหลัง Save
-3. ☐ เปิด `.asession` ที่ใหญ่: แถบ progress + ยกเลิกได้ (ตอนนี้ `UI.busy` ค้างทั้งหน้าจอ)
-4. ☐ test อัตโนมัติ: G2 (cancel ไม่ล้าง dirty), G3 (beforeunload เมื่อ session ถูกแก้), G4 (round-trip session ยาว), G5 (งบ undo)
+1. ☑ Save (Ctrl+S) บันทึกทับไฟล์เดิม / Save As เลือกที่ใหม่ (ตอนนี้ทุกการบันทึกเป็น download ใหม่ — ชื่อ session เป็น `Session.asession` ทุกครั้ง)
+2. ☑ ชื่อ session + "*" ใน title bar, รายการ Recent Sessions จำ path จริงหลัง Save
+3. ☑ เปิด `.asession` ที่ใหญ่: แถบ progress + ยกเลิกได้ (ตอนนี้ `UI.busy` ค้างทั้งหน้าจอ)
+4. ☑ test อัตโนมัติ: G2 (cancel ไม่ล้าง dirty), G3 (beforeunload เมื่อ session ถูกแก้), G4 (round-trip session ยาว), G5 (งบ undo)
 
 ## ลำดับแนะนำ
 G1 → A2 → (npm test ผ่าน 0 failed) → G2 → G3 → G4 → G5 → G6 → A1 → A4 → A5 → B1 → B2 → B3 → G7 → G8 → G9 → G10 → A3 → A6 (build ใหม่) → C → H → D
+
+---
+
+# ผลการแก้ (3 พ.ย. 2026, AudioStage 2.1.0)
+
+ทำงานใน git (repo ใหม่ในโฟลเดอร์นี้, commit แยกตามข้อ `[Fix 2.1.x]`) · `npm test`: **31 ไฟล์ · 0 failed** (รวมเทสต์ในแอปจริง) · ตัวติดตั้ง `dist/AudioStage Setup 2.1.0.exe` · ตัวเก่า 1.0.0 / 2.0.0 ย้ายไป `dist/old/`
+
+| ข้อ | สิ่งที่แก้ |
+|---|---|
+| G1 | `npm run icons`: `build/icons/*` และ `build/asession.ico` (16–256 px) ทำใหม่จากโลโก้ |
+| A2 | `node tools/make-help.js` + `predist` / `predist:linux` / `predist:all` สร้างคู่มือใหม่ทุกครั้งก่อน build |
+| G2 / H1 | หน้าต่าง Save อยู่ใน main (`files:chooseSave`) คืน path หรือ null · เขียนเป็นชิ้นลงไฟล์ชั่วคราว → fsync → rename (`electron/savefile.js`, `app/js/disk.js`) · `dirty` ล้างเฉพาะเมื่อเขียนครบ · **Save** (Ctrl+S) ทับไฟล์เดิม (WAV/FLAC ตาม bit depth เดิม; lossy ถามครั้งแรก แล้วจำรูปแบบ) · **Save As** (Ctrl+Shift+S) · Export Mixdown ถามที่บันทึกก่อนเรนเดอร์ · ปิดไฟล์ที่ยังไม่บันทึกมีปุ่ม Save |
+| G3 / H2 | `Session.dirty` (push / undo / redo) · ถาม Save / Don’t Save / Cancel ก่อนเปิดเซสชันอื่น, New Session, Recover และตอนปิดหน้าต่าง (`beforeunload`) · ชื่อเซสชัน/ไฟล์ + `*` บน title bar · Save Multitrack Session / Save Session As… · Recent Sessions จำ path จริง |
+| G4 / H3 | `.asession` **รูปแบบ 4 = ZIP** (`app/js/sessionzip.js`): `session.json` + `audio/<n>.wav` (32-bit float) เขียน/อ่านเป็นชิ้น (8 MB) ผ่าน main process พร้อม % และ Cancel, ZIP64, CRC, เช็กพื้นที่ดิสก์ · เปิด v1–v3 ได้ (`migrate` ไม่คัดลอกสตริงเสียงแล้ว) · เทสต์ round-trip เซสชัน **20 นาที stereo 48 kHz** ผ่านไฟล์จริง (ใช้เวลา ~13 วินาที; ถ้าหน่วยความจำว่างน้อยกว่า 1.6 GB เทสต์ใช้ 3 นาทีและพิมพ์บอก) + คำนวณว่ารูปแบบ 3 ต้องใช้สตริง 614 ล้านตัวอักษร (> เพดาน V8 ~537 ล้าน) · ตรวจไฟล์ด้วย `tar.exe` ของ Windows ได้ · MIME Linux รู้จักทั้ง ZIP และ JSON · **ยังไม่ได้ทดสอบเซสชัน 2 ชั่วโมงจริง** (เครื่องมีหน่วยความจำว่างไม่พอ) — โค้ดไม่มีเพดานความยาวนอกจาก RAM ของเสียงเอง |
+| G5 | Undo ของ Waveform เก็บเฉพาะช่วงที่เปลี่ยน (diff ต่อช่อง) + งบไบต์ min(¼ RAM, 1.5 GB) ตัดขั้นเก่าสุดก่อน (เหลืออย่างน้อย 1 ขั้น) แจ้งครั้งเดียวต่อไฟล์ |
+| G6 | save-back EditorStage, `files:write`, `store:put`, video mux เขียนแบบ atomic · ส่งออกลงโฟลเดอร์ที่มีชื่อซ้ำ: ถาม Replace / Keep Both / Cancel (ไฟล์ที่อ้างกัน CUE+WAV, XML+media: Replace / Cancel) ไม่งั้นเติม " (2)" |
+| A1 | About อ่านเวอร์ชันจาก main (`app:version`) + บรรทัดลิขสิทธิ์ BYS & RB |
+| A4 | probe ความยาววิดีโอแล้วใส่ `-t` (คง `apad -shortest`) · เทสต์: ผลต่างไม่เกิน 1 เฟรมทั้งเสียงสั้นและยาวกว่าวิดีโอ · เขียนไฟล์ `.partial` แล้วค่อย rename |
+| A5 / G10 | `license: UNLICENSED`, `author: BYS & RB` (vendor/maintainer ของแพ็กเกจ Linux ด้วย) · version 2.1.0 ทุกจุด (package, About, คู่มือ) |
+| B1 | หน้าต่างหลัก: `setWindowOpenHandler` deny (ลิงก์ http/https เปิดในเบราว์เซอร์), `will-navigate` / `will-redirect` กันทุกหน้าที่ไม่ใช่ `app/index.html` |
+| B2 | F12 / DevTools เฉพาะ `!app.isPackaged` หรือ `AUDIOSTAGE_DEVTOOLS=1` |
+| B3 | `lamejs` ย้ายไป devDependencies (แอปใช้ `app/vendor/lame.min.js`) + `app/vendor/lame.LICENSE.txt` (LGPL-3.0) |
+| G7 | File > Open / Recent / ไฟล์จาก Windows คืนแค่ path + ขนาด แล้วอ่านทีละไฟล์เป็นชิ้น (`files:read`) มี % และ Cancel |
+| G8 | ปิดโปรแกรมปกติแล้ว autosave ล่าสุดเก็บเป็น `last.json` → **File > Recover Last Session…** |
+| G9 | ระหว่างอัด เสียงถูกเขียนลง store ทุก 5 วินาที (`app/js/recspool.js`) · แครชแล้วเปิดใหม่ → "Recover interrupted recording" · take ที่จบแล้วลบ backup หลัง autosave ถัดไป |
+| A3 | ตามที่เจ้าของเลือก: **ไม่ตั้ง GitHub publish** — เอา `build.publish` และ `homepage` ปลอมออก · API อัปเดตและเมนู Help > Check for Updates… / ตัวเลือกใน Preferences แสดงเฉพาะเมื่อมีแหล่งอัปเดตจริง (อัปเดตผ่าน BYS All Stages Launcher) |
+| A6 | `npm test` 0 failed → `npm run dist` → `dist/AudioStage Setup 2.1.0.exe` · ย้าย Setup 1.0.0 และ 2.0.0 (+ blockmap) ไป `dist/old/` · เปิด `dist/win-unpacked/AudioStage.exe` (userData ชั่วคราว) ได้ ไม่มี error ใน log |
+| C | ROADMAP-LINUX ติ๊กตามของจริง + สรุปท้ายไฟล์ (เพิ่ม Media Browser `/media/<user>`, `/run/media/<user>`, `/mnt` และคำแนะนำ PipeWire/JACK ในหน้า Audio Hardware) · ROADMAP-MISSING ข้อ 12 ทำพร้อม A6 |
+| H4 | `tests/saving.test.js` (ZIP, round trip ยาว, CRC, ZIP64, ไฟล์เก่า, atomic writer, dirty, Recover Last Session, undo budget, autosave เป็นชิ้น, recording backup), `tests/security.test.js` (B1/B2/การเขียนไฟล์), `tests/app/72-saving.scenario.js` (Cancel ไม่ล้าง dirty, Save ทับไฟล์เดิม, beforeunload, เซสชัน ZIP เปิดกลับได้, ถามก่อนทับ), About ใน `00-boot` |
+
+**ตรวจซ้ำหลังแก้ (เพิ่ม):** autosave / versions เคยเขียนเสียงทั้งก้อนใน IPC เดียว (1 ชั่วโมง stereo = 1.4 GB) → เขียน/อ่านเป็นชิ้นแล้ว · ไฟล์ชั่วคราวของการบันทึกที่ค้างถูกลบเมื่อ renderer แครช
+
+**ยังไม่ได้ทำ:**
+- **D (ฟีเจอร์ใหม่ 1–10)** ทั้งหมด — เวลาหมดไปกับ A–C, G, H ซึ่งเกี่ยวกับข้อมูลผู้ใช้หาย; ควรทำเป็นรอบแยก
+- ROADMAP-LINUX ข้อ 2–6 ที่ต้องทดสอบบน Ubuntu จริง / GitHub Actions (ไม่มีเครื่อง Linux, repo ยังไม่มี remote)
+- ทดสอบเซสชัน 2 ชั่วโมงในแอปจริง (หน่วยความจำเครื่องไม่พอ — ทดสอบ 20 นาทีใน unit test แทน)
+- โหมดเบราว์เซอร์ (`npm run web`): Save ยังเป็น download (ไม่รู้ว่าผู้ใช้กด Save หรือ Cancel) — เบราว์เซอร์ไม่มี API ให้รู้

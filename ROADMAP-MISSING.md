@@ -122,9 +122,18 @@
 
 ## 12. สร้างตัวติดตั้งใหม่และตรวจสุดท้าย
 
-> ข้ามข้อนี้ตามที่ผู้ใช้สั่ง (27 ต.ค. 2026) — ยังไม่ได้เปลี่ยน version, ไม่ได้รัน npm run dist และยังไม่ได้ตรวจตัวที่แพ็กแล้ว
+> ทำแล้ว 3 พ.ย. 2026 พร้อมข้อ A6 ของ `PROMPT_FIX_AUDIT_2026-11-02.md` (เวอร์ชัน 2.1.0 แทน 1.1.0 ที่วางแผนไว้เดิม)
 
-- [ ] อัปเดต `version` ใน `package.json` เป็น `1.1.0` และหน้า About
-- [ ] `npm test` ผ่านทั้งหมด → `npm run dist`
-- [ ] ตรวจใน `dist/win-unpacked/AudioStage.exe` (หรือรัน selftest กับตัวที่แพ็กแล้ว): เปิดแอปได้ไม่มี error, ฟีเจอร์ล่าสุดทุกอย่าง (Spectral, Favorites, Metering, Surround, CD Layout, XML และข้อ 1–11) อยู่ครบ, ปุ่ม Install VST Support ทำงานในตัวที่แพ็กแล้ว
-- [ ] สรุปท้ายไฟล์นี้: ทำอะไรไปบ้าง, อะไรทำไม่ได้และเพราะอะไร, ไลบรารีใหม่และสัญญาอนุญาตของแต่ละตัว
+- [x] อัปเดต `version` ใน `package.json` เป็น `2.1.0` และหน้า About (อ่านจาก `app.getVersion()`)
+- [x] `npm test` ผ่านทั้งหมด (0 failed) → `npm run dist` → `dist/AudioStage Setup 2.1.0.exe`
+- [x] ตรวจใน `dist/win-unpacked/AudioStage.exe` (เปิดได้ ไม่มี error ใน log; ฟีเจอร์ตรวจด้วยเทสต์ในแอปจริงก่อน build — ปุ่ม Install VST Support ในตัวที่แพ็กแล้วยังไม่ได้กดจริงเพราะจะดาวน์โหลด Python) (หรือรัน selftest กับตัวที่แพ็กแล้ว): เปิดแอปได้ไม่มี error, ฟีเจอร์ล่าสุดทุกอย่าง (Spectral, Favorites, Metering, Surround, CD Layout, XML และข้อ 1–11) อยู่ครบ, ปุ่ม Install VST Support ทำงานในตัวที่แพ็กแล้ว
+- [x] สรุปท้ายไฟล์นี้: ทำอะไรไปบ้าง, อะไรทำไม่ได้และเพราะอะไร, ไลบรารีใหม่และสัญญาอนุญาตของแต่ละตัว
+
+---
+
+## สรุปข้อ 12 (3 พ.ย. 2026)
+
+- เวอร์ชัน 2.1.0: About / คู่มือ / ตัวติดตั้งใช้เลขจาก `package.json` · ตัวติดตั้งเก่า (1.0.0, 2.0.0) ย้ายไป `dist/old/`
+- ไม่มีไลบรารีใหม่ — ZIP ของ `.asession` รูปแบบ 4, การเขียนไฟล์แบบ atomic และ backup ระหว่างอัดเขียนเองในโปรเจกต์ · `lamejs` (LGPL-3.0) ย้ายเป็น devDependency เพราะแอปใช้ไฟล์ `app/vendor/lame.min.js` (ใส่ `app/vendor/lame.LICENSE.txt`) · electron-updater (MIT) ยังอยู่ แต่ปิดเพราะไม่มี `build.publish` (อัปเดตผ่าน BYS All Stages Launcher)
+- license ของโปรเจกต์: `UNLICENSED` (Copyright (c) BYS & RB. All rights reserved by BYS & RB)
+- รายละเอียดการแก้ทั้งหมดอยู่ท้าย `PROMPT_FIX_AUDIT_2026-11-02.md`
