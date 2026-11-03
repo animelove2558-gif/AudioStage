@@ -14,6 +14,9 @@
       get: async (k) => chk(await api.get(k)).data || null,
       del: async (k) => { chk(await api.del(k)); },
       list: async (p) => chk(await api.list(p || '')).keys,
+      // large values in pieces (temporary file renamed when complete), and read back in pieces
+      sink: api.begin ? (k) => { let id = null; const open = async () => id || (id = chk(await api.begin(k)).id); return { write: async (u8) => { const h = await open(); for (let o = 0; o < u8.length; o += 16 << 20) chk(await api.append(h, u8.subarray(o, Math.min(u8.length, o + (16 << 20))))); }, commit: async () => { chk(await api.commit(await open())); }, abort: async () => { if (id) await api.abort(id); } }; } : null,
+      source: api.stat ? async (k) => { const st = chk(await api.stat(k)); return st.size == null ? null : { size: st.size, read: async (o, n) => chk(await api.read(k, o, n)).data }; } : null,
     };
   }
   function idbBackend() {
@@ -34,7 +37,11 @@
   }
   function create(backend) {
     const b = backend;
-    return { kind: b.kind, put: b.put, get: b.get, del: b.del, list: b.list, getText: async (k) => { const u = await b.get(k); return u ? dec(u) : null; }, getJSON: async (k) => { const u = await b.get(k); return u ? JSON.parse(dec(u)) : null; } };
+    /* sink(key) → { write(u8), commit(), abort() } · source(key) → { size, read(offset, length) } | null — streaming
+       where the backend can (desktop), otherwise collected in memory */
+    const sink = (k) => (b.sink ? b.sink(k) : (() => { const parts = []; return { write: async (u) => { parts.push(u.slice()); }, commit: async () => { const n = parts.reduce((a, p) => a + p.length, 0), o = new Uint8Array(n); let q = 0; for (const p of parts) { o.set(p, q); q += p.length; } await b.put(k, o); }, abort: async () => {} }; })());
+    const source = async (k) => { if (b.source) return b.source(k); const u = await b.get(k); return u ? { size: u.length, read: async (o, n) => u.subarray(o, o + n) } : null; };
+    return { kind: b.kind, put: b.put, get: b.get, del: b.del, list: b.list, sink, source, getText: async (k) => { const u = await b.get(k); return u ? dec(u) : null; }, getJSON: async (k) => { const u = await b.get(k); return u ? JSON.parse(dec(u)) : null; } };
   }
   const pick = () => (root.audioStageStore ? electronBackend(root.audioStageStore) : typeof indexedDB !== 'undefined' ? idbBackend() : memoryBackend());
   AS.store = Object.assign(create(pick()), { create, memoryBackend });

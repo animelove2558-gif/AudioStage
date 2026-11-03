@@ -133,6 +133,17 @@ ok('whole-file edits keep full copies, but only within the byte budget: oldest s
   assert(AS.Doc.undoBudget() <= 1.5 * 1024 ** 3);
 });
 
+okAsync('autosave audio is written and read in pieces (several pieces of 1 M frames) and comes back bit-exact', async () => {
+  const A = AS.autosave, st = AS.store.create(AS.store.memoryBackend()), s = new AS.Session(), N = 2600000;
+  const x = new Float32Array(N), y = new Float32Array(N); for (let i = 0; i < N; i++) { x[i] = ((i % 977) - 488) / 1000; y[i] = -x[i]; }
+  s.addClip(s.tracks[0], AS.makeSource('long', 48000, [x, y]), 0);
+  await A.saveNow(st, { session: s, docs: [], mode: 'multi' });
+  const k = (await st.list('audio/'))[0], u = await st.get(k); assert.strictEqual(u.length, 44 + N * 8, 'one 32-bit float WAV');
+  const r = await A.restore(st, await A.readAutosave(st)), c = r.session.tracks[0].clips[0].src;
+  assert.strictEqual(c.ch[0].length, N); for (let i = 0; i < N; i += 997) { assert.strictEqual(c.ch[0][i], x[i]); assert.strictEqual(c.ch[1][i], y[i]); }
+  assert.strictEqual(c.ch[1][N - 1], y[N - 1]);
+});
+
 /* ---------- recording written to disk while recording (G9) ---------- */
 const sbr = load([...CORE, 'recspool.js']), RS = sbr.AS.recSpool;
 okAsync('a recording is backed up every few seconds; after a crash it is listed and recovered sample-exact; Stop deletes it', async () => {

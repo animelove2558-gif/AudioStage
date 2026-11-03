@@ -92,6 +92,12 @@ contextBridge.exposeInMainWorld('audioStageStore', {
   get: (key) => ipcRenderer.invoke('store:get', key),
   del: (key) => ipcRenderer.invoke('store:del', key),
   list: (prefix) => ipcRenderer.invoke('store:list', prefix || ''),
+  begin: (key) => ipcRenderer.invoke('store:begin', key),
+  append: (id, data) => ipcRenderer.invoke('files:append', id, data),
+  commit: (id) => ipcRenderer.invoke('files:commit', id),
+  abort: (id) => ipcRenderer.invoke('files:abort', id),
+  stat: (key) => ipcRenderer.invoke('store:stat', key),
+  read: (key, off, len) => ipcRenderer.invoke('store:read', key, off, len),
 });
 
 // Exports of several files: pick a destination folder once, then write plain file names into it

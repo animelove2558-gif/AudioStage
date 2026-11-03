@@ -60,8 +60,9 @@
   async function closeDoc(d, force) {
     if (!d) return;
     if (d.dirty && !force) {
-      const r = await UI.dialog({ title: 'Close File', html: `<p>“${UI.esc(d.name)}” has unsaved changes. Close anyway?</p>`, okLabel: 'Close without saving' });
+      const r = await UI.dialog({ title: 'Close File', html: `<p>“${UI.esc(d.name)}” has unsaved changes. Close anyway?</p>`, okLabel: 'Close without saving', extraButtons: [{ id: 'save', label: 'Save' }] });
       if (!r) return;
+      if (r === 'save' && !(await saveDoc('save', d))) return; // not saved (cancelled / failed): keep it open
     }
     if (app.playDoc === d) stop(false);
     const i = app.docs.indexOf(d); app.docs.splice(i, 1);

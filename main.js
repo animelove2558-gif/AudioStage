@@ -291,6 +291,14 @@ ipcMain.handle('store:put', wrap((e, key, data) => {
 }));
 ipcMain.handle('store:get', wrap((e, key) => { const p = storePath(key); return { data: fs.existsSync(p) ? new Uint8Array(fs.readFileSync(p)) : null }; }));
 ipcMain.handle('store:del', wrap((e, key) => { const p = storePath(key); if (fs.existsSync(p)) fs.unlinkSync(p); return {}; }));
+// large store files (autosave audio of long sessions) in pieces: begin → files:append / files:commit, stat + read
+ipcMain.handle('store:begin', wrap((e, key) => ({ id: writer.begin(storePath(key)) })));
+ipcMain.handle('store:stat', wrap((e, key) => { const p = storePath(key); return fs.existsSync(p) ? { size: fs.statSync(p).size } : { size: null }; }));
+ipcMain.handle('store:read', wrap((e, key, off, len) => {
+  const p = storePath(key), o = Math.max(0, Math.floor(+off || 0)), n = Math.max(0, Math.min(64 * 1024 * 1024, Math.floor(+len || 0))), fd = fs.openSync(p, 'r');
+  try { const b = Buffer.allocUnsafe(n); let got = 0; while (got < n) { const k = fs.readSync(fd, b, got, n - got, o + got); if (!k) break; got += k; } return { data: new Uint8Array(b.buffer, b.byteOffset, got) }; }
+  finally { fs.closeSync(fd); }
+}));
 ipcMain.handle('store:list', wrap((e, prefix) => {
   const out = [], root = storeRoot();
   const walk = (dir, rel) => { if (!fs.existsSync(dir)) return; for (const ent of fs.readdirSync(dir, { withFileTypes: true })) { const r = rel ? rel + '/' + ent.name : ent.name; if (ent.isDirectory()) walk(path.join(dir, ent.name), r); else if (!ent.name.endsWith('.tmp')) out.push(r); } };
@@ -370,7 +378,7 @@ function createWindow() {
     if (choice === 0) e.preventDefault(); // preventDefault here = ignore the page's objection and close
   });
   win.webContents.on('console-message', (...a) => { const d = a[1] && typeof a[1] === 'object' ? a[1] : { level: a[1], message: a[2], sourceId: a[4], lineNumber: a[3] }; const lv = typeof d.level === 'string' ? d.level : ['verbose', 'info', 'warning', 'error'][d.level]; if (lv === 'error' || lv === 'warning') log.write(lv === 'error' ? 'error' : 'warn', `${d.message} (${path.basename(String(d.sourceId || ''))}:${d.lineNumber})`); });
-  win.webContents.on('render-process-gone', (e, d) => log.write('error', 'The window crashed: ' + d.reason));
+  win.webContents.on('render-process-gone', (e, d) => { log.write('error', 'The window crashed: ' + d.reason); writer.abortAll(); }); // (no half-written temporary files left behind)
   win.on('closed', () => { win = null; writer.abortAll(); if (helpWin && !helpWin.isDestroyed()) helpWin.close(); });
   if (SELFTEST) require('./tests/app/selftest')(app, win);
 }
