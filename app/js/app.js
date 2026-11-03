@@ -286,7 +286,9 @@
       const bars = MS.on ? MS.countIn : 0, countIn = bars * AS.tempo.barLen(app.tempo());
       const recStart = multiMode ? (punch ? punch.a : looped ? rg.a : app.multiCursor) : 0;
       app.recording = { mode: app.mode, start: recStart, punch, trackId: app.selTrack, clipped: false, t0: performance.now() + countIn * 1000 };
-      await eng.startRecord({ input: opts && opts.input, onChunk: (d) => { if (d.peak >= 0.999 && app.recording && !app.recording.clipped) { app.recording.clipped = true; status('⚠ Input is clipping — lower the input level.'); multi.rebuildHeads(); } } });
+      eng.init(); const rec0 = app.recording;
+      rec0.spool = AS.recSpool.start(ST, { sr: eng.ctx.sampleRate, nch: 2, name: multiMode ? 'Recording.wav' : 'Recording ' + (app.docs.length + 1) + '.wav' }); // written to disk while recording (G9)
+      await eng.startRecord({ input: opts && opts.input, onChunk: (d) => { if (d.ch) rec0.spool.push(d.ch); if (d.peak >= 0.999 && app.recording && !app.recording.clipped) { app.recording.clipped = true; status('⚠ Input is clipping — lower the input level.'); multi.rebuildHeads(); } } });
       if (multiMode) {
         app.multiOrigin = app.multiCursor;
         const from = punch ? Math.max(0, punch.a - RS.preRoll) : recStart;
@@ -303,11 +305,14 @@
       }
       updatePlayBtn(); multi.rebuildHeads();
       status((bars ? `Count-in ${bars} bar(s)… ` : '') + (punch ? `Punch recording ${fmtTime(punch.a)}–${fmtTime(punch.b)}` : app.recording.loop ? 'Loop recording: every pass becomes a take' : 'Recording…') + ' — press Stop to finish.');
-    } catch (e) { app.recording = null; UI.toast('Cannot record: ' + (e.message || e), 'error'); }
+    } catch (e) { if (app.recording && app.recording.spool) app.recording.spool.stop(); app.recording = null; UI.toast('Cannot record: ' + (e.message || e), 'error'); }
   }
+  /* finished takes: their disk backup is deleted once an autosave has the take too (or at the next normal start) */
+  const doneSpools = [];
   async function finishRecording() {
     const r = app.recording; app.recording = null; stopMetro();
     const data = await eng.stopRecord(app.session.tracks.some((t) => t.arm && t.monitor));
+    if (r.spool) { if (data && data.ch[0].length) { r.spool.flush(); doneSpools.push(r.spool); } else r.spool.stop(); }
     multi.rebuildHeads();
     if (!data || !data.ch[0].length) return;
     const lat = (RS.latencyMs || 0) / 1000, sr = data.sr, R = AS.rec;
@@ -1775,7 +1780,7 @@
     if (saving) return saving; const sig = workSig();
     if (!force && (sig === lastSig || !hasWork())) return null;
     saving = AU.saveNow(ST, { session: app.session, docs: app.docs, mode: app.mode })
-      .then((m) => { lastSig = sig; lastSave = Date.now(); $('#statusMsg').title = 'Autosaved ' + new Date().toLocaleTimeString(); return m; })
+      .then((m) => { lastSig = sig; lastSave = Date.now(); $('#statusMsg').title = 'Autosaved ' + new Date().toLocaleTimeString(); for (const sp of doneSpools.splice(0)) sp.stop(); return m; })
       .catch((e) => { console.warn('Autosave failed:', e); status('Autosave failed: ' + (e.message || e)); return null; })
       .finally(() => { saving = null; });
     return saving;
@@ -1795,8 +1800,9 @@
     updateFiles(); updateMarkers();
   }
   /* start-up: did the last run end normally? If not and there is an autosave, offer to recover it */
+  let lastRunCrashed = false;
   async function checkRecovery() {
-    const crashed = AU.boot(); let man = null;
+    const crashed = (lastRunCrashed = AU.boot()); let man = null;
     try { man = await AU.readAutosave(ST); } catch (e) { return; }
     if (!man) return;
     if (!crashed) { AU.keepAsLast(ST).catch(() => {}); return; } // clean exit last time: kept for File > Recover Last Session…
@@ -1807,6 +1813,20 @@
     try { useRecovered(await UI.busy('Recovering…', () => AU.restore(ST, man))); status('Recovered the work autosaved at ' + when + '.'); } catch (e) { UI.toast('Recovery failed: ' + (e.message || e), 'error'); }
   }
   app.recoveryChecked = checkRecovery();
+  /* recordings that were still running (or not yet autosaved) when the app ended abnormally (recspool.js) */
+  async function checkRecordings(crashed) {
+    let list = []; try { list = await AS.recSpool.list(ST); } catch (e) { return; }
+    if (!list.length) return;
+    if (!crashed) { for (const r of list) await AS.recSpool.discard(ST, r.id); return; } // normal exit: the takes were in the app
+    const rows = list.map((r) => `<li>${UI.esc(r.name)} — ${new Date(r.time).toLocaleString()}</li>`).join('');
+    const ok = await UI.dialog({ title: 'Recover interrupted recording', okLabel: 'Recover', cancelLabel: 'Discard', width: 480, html: `<p>AudioStage did not close normally while recording. The recorded audio was kept on disk:</p><ul>${rows}</ul><div class="note">Recover opens each as a new unsaved file. Discard deletes it.</div>` });
+    for (const r of list) {
+      if (ok) { try { const x = await UI.busy('Recovering the recording…', () => AS.recSpool.recover(ST, r.id)); const d = addDoc(x.name.replace(/\.wav$/i, '') + ' (recovered).wav', x.sr, x.ch); d.dirty = true; } catch (e) { UI.toast('Recovery failed: ' + (e.message || e), 'error'); continue; } }
+      await AS.recSpool.discard(ST, r.id);
+    }
+    if (ok) { updateFiles(); setMode('wave'); }
+  }
+  app.recordingsChecked = app.recoveryChecked.then(() => checkRecordings(lastRunCrashed)).catch(() => {});
   /* File > Recover Last Session…: the work autosaved before the last normal exit (also after "Close Without Saving") */
   async function recoverLast() {
     await app.recoveryChecked;

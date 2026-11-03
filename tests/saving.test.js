@@ -133,5 +133,17 @@ ok('whole-file edits keep full copies, but only within the byte budget: oldest s
   assert(AS.Doc.undoBudget() <= 1.5 * 1024 ** 3);
 });
 
+/* ---------- recording written to disk while recording (G9) ---------- */
+const sbr = load([...CORE, 'recspool.js']), RS = sbr.AS.recSpool;
+okAsync('a recording is backed up every few seconds; after a crash it is listed and recovered sample-exact; Stop deletes it', async () => {
+  const st = sbr.AS.store.create(sbr.AS.store.memoryBackend()), R = 8000, sp = RS.start(st, { sr: R, nch: 2, name: 'Take.wav' }), L = [], Rr = [];
+  for (let k = 0; k < 150; k++) { const a = new Float32Array(680), b = new Float32Array(680); for (let i = 0; i < 680; i++) { a[i] = Math.fround(Math.sin((k * 680 + i) / 50)); b[i] = -a[i] / 2; } L.push(a); Rr.push(b); sp.push([a, b]); } // 12.75 s in ~85 ms chunks
+  await sp.flush(); // (what a crash leaves: everything flushed so far)
+  const list = await RS.list(st); assert.strictEqual(list.length, 1); assert(list[0].segments >= 2, 'several segments'); assert.strictEqual(list[0].name, 'Take.wav');
+  const x = await RS.recover(st, list[0].id); assert.strictEqual(x.ch[0].length, 150 * 680); assert.strictEqual(x.sr, R);
+  for (let k = 0; k < 150; k += 7) for (let i = 0; i < 680; i += 13) { assert.strictEqual(x.ch[0][k * 680 + i], L[k][i]); assert.strictEqual(x.ch[1][k * 680 + i], Rr[k][i]); }
+  await sp.stop(); assert.strictEqual((await RS.list(st)).length, 0); assert.strictEqual((await st.list('rec/')).length, 0, 'nothing left');
+});
+
 done();
 process.on('exit', () => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* */ } });
