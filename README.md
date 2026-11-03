@@ -8,12 +8,12 @@
 npm install
 npm start          # แอปเดสก์ท็อป (Electron)
 npm run web        # หรือเปิดในเบราว์เซอร์ที่ http://localhost:5173
-npm test           # รันทุกไฟล์ใน tests/ (449 เทสต์ ใน 28 ไฟล์ รวมเทสต์ในแอปจริง — บรรทัดสุดท้ายพิมพ์ยอดรวมจริง)
+npm test           # รันทุกไฟล์ใน tests/ (รวมเทสต์ในแอปจริง — บรรทัดสุดท้ายพิมพ์ยอดรวมจริง)
 ```
 
 ## ฟีเจอร์ที่มีแล้ว
 
-**Waveform Editor** — เปิด WAV (8/16/24/32/float, คง sample rate เดิม) และ MP3/OGG/FLAC/M4A ผ่านตัวถอดรหัสของระบบ · ซูม/เลื่อน/เลือกช่วง/ลากขอบ selection · มุมมอง Spectral (log-frequency) · Markers · Undo/Redo 40 ขั้น · Cut/Copy/Paste/Mix Paste/Copy-to-New/Paste-to-New/Crop/Delete/Trim Silence · Convert Sample Rate / Mono⇄Stereo · Loop playback · Record จากไมค์ (lossless PCM)
+**Waveform Editor** — เปิด WAV (8/16/24/32/float, คง sample rate เดิม) และ MP3/OGG/FLAC/M4A ผ่านตัวถอดรหัสของระบบ · ซูม/เลื่อน/เลือกช่วง/ลากขอบ selection · มุมมอง Spectral (log-frequency) · Markers · Undo/Redo 40 ขั้น (เก็บเฉพาะช่วงที่แก้ และจำกัดหน่วยความจำ undo ไม่เกิน ¼ ของ RAM / 1.5 GB — ขั้นเก่าสุดถูกตัดก่อนพร้อมแจ้งครั้งเดียว) · Cut/Copy/Paste/Mix Paste/Copy-to-New/Paste-to-New/Crop/Delete/Trim Silence · Convert Sample Rate / Mono⇄Stereo · Loop playback · Record จากไมค์ (lossless PCM)
 
 **Effects (พรีวิวสดก่อน Apply)** — Amplify, Normalize, Loudness Normalize (LUFS, ITU-R BS.1770), Fade, Gain Ramp, Compressor, Hard Limiter (look-ahead), Noise Gate, DC offset, Invert, Reverse · Parametric EQ, Graphic EQ 10 แบนด์, HP/LP/BP/Notch · Time Stretch (WSOLA), Pitch Shifter, Varispeed · Echo, Chorus, Flanger, Vibrato, Phaser, Tremolo, Reverb · Distortion, Bit Crusher · Stereo Width, Balance, Swap, Vocal Remover · **Restoration:** Noise Reduction (capture noise print), Click/Pop Eliminator, DeHummer, DeEsser
 
@@ -41,16 +41,28 @@ npm test           # รันทุกไฟล์ใน tests/ (449 เทส�
 - **DeReverb** (Effects > Noise Reduction / Restoration): ลดเสียงก้องห้องด้วย DSP ล้วน — ประมาณพลังงานของเสียงก้องช่วงท้าย (late reverberation) ในแต่ละย่านความถี่จากเสียงเมื่อ 50 ms ก่อน ที่ลดลงตามเวลาก้องของห้อง (T60) แล้วหักออกแบบ spectral subtraction (แนวทางของ Lebart, Boucher & Denbigh 2001) · **DeReverb (process)…** แบบ offline: Amount, Processing Focus (ทุกความถี่ / ต่ำ / กลาง-เสียงพูด / สูง), Gain compensation, Auto gain compensation (คืนความดังเท่าเดิม) และ Room decay T60 (0 = **ประมาณจากไฟล์เอง** จากช่วงที่เสียงจางลง) มีปุ่ม Preview · **DeReverb…** แบบเรียลไทม์ใน Effects Rack (AudioWorklet เรียกฟังก์ชันต่อเฟรมตัวเดียวกับแบบ offline จึงได้ผลเท่ากัน; ตั้ง T60 เอง เพราะตอนเล่นสดไม่มีทั้งไฟล์ให้วัด) ใส่ในแทร็ก/คลิป หรือ Preview + Apply ใน Waveform ได้ · latency 3072 แซมเปิล ชดเชยอัตโนมัติ (แก้ค่า latency ที่ประกาศของ DeNoise / Adaptive Noise Reduction จาก 1536 เป็น 3072 ให้ตรงของจริงด้วย) · เทสต์: เสียงแห้ง + convolution reverb สังเคราะห์ → ผลใกล้เสียงแห้งกว่าเดิม, การประมาณ T60, เรียลไทม์ = offline
 - **Generate > Speech…** (Text to Speech, เฉพาะแอปเดสก์ท็อปบน Windows): พิมพ์ข้อความ เลือกเสียง/ภาษา — รายการคือ **เสียงที่ติดตั้งใน Windows** (ภาษาไทยขึ้นก่อน เช่น Microsoft Pattara) ความเร็ว (50–300 %), pitch (±12 st, ความยาวเท่าเดิม), ระดับเสียง (normalize peak) · ถ้ามี selection: **แทนที่ selection** หรือ **แทรกที่ต้น selection**; ไม่มี selection: แทรกที่ playhead; ไม่มีไฟล์เปิดอยู่ (หรืออยู่ในมัลติแทร็ก): สร้างไฟล์ใหม่ · **Undo ได้** (Generate Speech) · ทำงาน **ออฟไลน์ทั้งหมด** ไม่ใช้บริการคลาวด์ ไม่ส่งข้อความหรือเสียงออกนอกเครื่อง: main process เรียก Windows PowerShell 5.1 (`-EncodedCommand` ไม่ต้องแก้ execution policy; ข้อความส่งผ่านไฟล์ชั่วคราว UTF-8 ภาษาไทยไม่เพี้ยน) ใช้ **WinRT `Windows.Media.SpeechSynthesis`** (เห็นเสียง OneCore ที่ language pack ติดตั้ง — เสียงไทยอยู่ที่นี่) และ **System.Speech (SAPI)** เป็นตัวสำรอง แล้วรับกลับเป็น WAV · ภาษาที่เครื่องยังไม่มีเสียง (ไทย, อังกฤษ, ญี่ปุ่น, จีน, เกาหลี, ฝรั่งเศส, เยอรมัน, สเปน, เวียดนาม) ขึ้นในรายการว่า "no voice installed" และบอกวิธีติดตั้ง: Windows Settings > Time & language > Language & region > Add a language > (ภาษา) > ติ๊ก **Text-to-speech** — ติดตั้งแล้วเปิดหน้าต่างใหม่ได้เลยไม่ต้องรีสตาร์ท · โหมดเบราว์เซอร์ไม่มีเมนูนี้ (เบราว์เซอร์อัดเสียงพูดลงไฟล์แบบออฟไลน์ไม่ได้) · `electron/tts.js`, `app/js/speech.js` · เทสต์: `tests/tts.test.js` (PowerShell จำลอง + เสียงจริงหนึ่งครั้งถ้าเครื่องมีเสียง) และ `tests/app/94-speech.scenario.js` (เอนจินเสียงจำลอง)
 - **File > File Info / Metadata…**: Title, Artist, Album, Year, Genre, Track (เช่น `3/12`), Comment และ **ภาพปก** (PNG / JPEG ไม่เกิน 8 MB, มีตัวอย่างภาพ + Remove) ของไฟล์ที่เปิดอยู่ · Title / Artist ในหน้าต่าง Save As เป็นค่าชุดเดียวกัน และเขียนลง **BWF / CART** ของ WAV เหมือนเดิม · ตอนบันทึก (Save As / Save Selection As / Batch Process) เขียนแท็กลงไฟล์ด้วยโค้ดของโปรเจกต์เอง (`app/js/tags.js` ไม่ใช้ไลบรารี GPL) รองรับ UTF-8 ภาษาไทยไม่เพี้ยน: **MP3 / AAC (ADTS)** → ID3v2.4 · **FLAC** → VORBIS_COMMENT + PICTURE · **Opus** → OpusTags (ภาพปกเป็น METADATA_BLOCK_PICTURE; แบ่งหน้า Ogg และคำนวณ CRC ใหม่) · **M4A** → atoms `©nam ©ART ©alb ©day ©gen ©cmt trkn covr` ใน `moov/udta/meta/ilst` (ขยับ chunk offset ให้) · **WAV** → LIST/INFO + chunk `id3 ` (ภาพปก) · **อ่านแท็กตอนเปิดไฟล์** (ID3v2.2–2.4 / ID3v1, Vorbis comments ของ FLAC / Opus / Ogg Vorbis, MP4, WAV INFO / id3 / CART / BWF) และเก็บไว้กับไฟล์ (รวมใน Autosave) บันทึกซ้ำแล้วแท็กไม่หาย · ติ๊ก "Include metadata" ออกในหน้าต่าง Save As ถ้าไม่ต้องการแท็ก · **Batch Process** เขียนแท็กของแต่ละไฟล์ด้วย และใช้ `{title}` `{artist}` `{album}` `{year}` `{genre}` `{track}` ในชื่อไฟล์ได้ (`{title}` ว่างจะใช้ชื่อไฟล์แทน) · Export Multitrack Mixdown ยังไม่ใส่แท็ก (ใช้กับไฟล์ใน Waveform) · เทสต์: `tests/tags.test.js` (เขียน → อ่านกลับทุกฟิลด์ รวมภาษาไทยและภาพปก, เสียงไม่ถูกแตะ) และ `tests/app/95-metadata.scenario.js` (encoder จริงทุกฟอร์แมต ไฟล์ที่ติดแท็กแล้วยังถอดรหัสได้)
-- **อัปเดตอัตโนมัติ** (Help > **Check for Updates…**, เฉพาะแอปที่ติดตั้งจาก `.exe`): ใช้ **electron-updater** (MIT) กับ **GitHub Releases** (ฟรี) · ตรวจตอนเปิดแอปด้วย (ประมาณ 5 วินาทีหลังเปิด) ปิดได้ที่ Preferences > General > "Check for updates when AudioStage opens" — การตรวจตอนเปิดเงียบเสมอ ขึ้นหน้าต่างเฉพาะเมื่อมีเวอร์ชันใหม่ · **ถามก่อนทุกครั้ง**: มีเวอร์ชันใหม่ → ถามว่าจะดาวน์โหลดไหม (แสดง release notes) → ดาวน์โหลดพร้อมแถบความคืบหน้า กด Cancel ได้ → ถามอีกครั้งว่าจะ "Restart and Install" หรือ "Later" (ไม่ติดตั้งเองตอนปิดแอป) · ข้อความ error อ่านเข้าใจ (ไม่มีอินเทอร์เน็ต, ยังไม่มี release, GitHub จำกัดจำนวนครั้ง) · **ยังไม่ได้ตั้ง repo = ฟีเจอร์ปิดตัวเองเงียบๆ**: `build.publish` ใน `package.json` ตั้งเป็น GitHub ไว้แล้วแต่ **ยังไม่มี `owner`** → ตอน build electron-builder แค่เตือนและไม่สร้าง `app-update.yml` แอปจึงไม่ตรวจอะไร (เมนูบอกว่ายังไม่ได้ตั้งค่า) · `npm start` ไม่ตรวจอัปเดต (บอกว่าใช้ได้ในแอปที่ติดตั้ง) · โหมดเบราว์เซอร์ไม่มีเมนูนี้ · `electron/updater.js`, `app/js/updates.js` · เทสต์: `tests/updater.test.js` (electron-updater จำลอง) และ `tests/app/96-updates.scenario.js` (เซิร์ฟเวอร์อัปเดตจำลองในแอปจริง)
+- **อัปเดต**: AudioStage รับเวอร์ชันใหม่ผ่าน **BYS All Stages Launcher** · `package.json` ไม่มี `build.publish` จึงไม่สร้าง `app-update.yml` และ **ไม่แสดง Help > Check for Updates…** (และตัวเลือกใน Preferences) — โค้ด electron-updater (`electron/updater.js`, `app/js/updates.js`) ยังอยู่และเปิดเองเฉพาะเมื่อตัวที่ติดตั้งมีแหล่งอัปเดตจริง (ถามก่อนดาวน์โหลด/ติดตั้งทุกครั้ง) · เทสต์: `tests/updater.test.js`, `tests/app/96-updates.scenario.js` (เซิร์ฟเวอร์อัปเดตจำลอง)
 
-### วิธีออกเวอร์ชันใหม่ (ให้ผู้ใช้ได้รับอัปเดต)
+### วิธีออกเวอร์ชันใหม่
 
-1. ครั้งแรกครั้งเดียว: สร้าง repo บน GitHub (เช่น `AudioStage`) แล้วใส่ชื่อบัญชีใน `package.json` → `build.publish[0].owner` (เช่น `"owner": "bys-allstages"`, `"repo": "AudioStage"`) — ถ้า repo เป็น private ผู้ใช้จะดาวน์โหลดอัปเดตไม่ได้ ให้ใช้ public
-2. เพิ่มเลข `version` ใน `package.json` (เช่น `1.1.0` → `1.1.1`; แอปเทียบเลขเวอร์ชันนี้)
-3. `npm test` แล้ว `npm run dist` (สคริปต์นี้ใช้ `--publish never` จึงไม่อัปโหลดอะไรเอง)
-4. บน GitHub: **Releases > Draft a new release** → tag `v1.1.1` → อัปโหลด 3 ไฟล์จาก `dist/`: `AudioStage Setup 1.1.1.exe`, **`latest.yml`** และ `AudioStage Setup 1.1.1.exe.blockmap` → **Publish release** (ไม่ใช่ draft / pre-release)
-5. ผู้ใช้เวอร์ชันเก่าที่ติดตั้งจาก `.exe` ที่ build **หลังจากตั้ง owner แล้ว** จะเห็นอัปเดตตอนเปิดแอปหรือเมื่อกด Help > Check for Updates… (ตัวติดตั้งที่ build ก่อนตั้ง owner ไม่มี `app-update.yml` จึงต้องติดตั้งเวอร์ชันใหม่ด้วยมือหนึ่งครั้ง)
+1. เพิ่มเลข `version` ใน `package.json` (About และคู่มือใช้เลขนี้เอง)
+2. `npm test` (0 failed) แล้ว `npm run dist` (`predist` สร้างคู่มือ `app/help/index.html` ใหม่จาก README ก่อน; `--publish never`)
+3. ส่ง `dist/AudioStage Setup <version>.exe` ให้ BYS All Stages Launcher
+
 - ตัวติดตั้งยังไม่ได้เซ็นโค้ด (ไม่ซื้อใบรับรอง): Windows SmartScreen อาจเตือนตอนติดตั้ง/อัปเดต — กด "More info > Run anyway"
+
+## เพิ่มในเวอร์ชัน 2.1.0
+
+- **Save จริง**: File > **Save** (Ctrl+S) บันทึกทับไฟล์ที่เปิดมา (WAV ที่ bit depth เดิม / FLAC; ไฟล์ lossy ถามรูปแบบครั้งแรกครั้งเดียว) · **Save As…** (Ctrl+Shift+S) เลือกที่บันทึกด้วยหน้าต่างของระบบ · ไฟล์ถูกนับว่า "บันทึกแล้ว" เฉพาะเมื่อเขียนครบจริง — กด Cancel หรือเขียนไม่สำเร็จ เครื่องหมาย `*` ยังอยู่ · ชื่อไฟล์/เซสชัน + `*` อยู่บน title bar
+- **เขียนไฟล์อย่างปลอดภัย**: ทุกการบันทึก (Save, Save Session, Export Mixdown, Save back to EditorStage, Export Ranges, CD Layout, Batch, autosave) เขียนลงไฟล์ชั่วคราว → fsync → เปลี่ยนชื่อทับ จึงไม่มีไฟล์ครึ่งๆ กลางๆ เมื่อแครช/ดิสก์เต็ม (`electron/savefile.js`) · ส่งออกหลายไฟล์ลงโฟลเดอร์ที่มีชื่อซ้ำ: ถาม Replace / Keep Both (เติม " (2)") / Cancel — ไม่ทับเงียบๆ
+- **เซสชันมัลติแทร็ก**: มีสถานะ "ยังไม่บันทึก" — ปิดหน้าต่าง, เปิดเซสชันอื่น, New Session หรือ Recover จะถาม Save / Don’t Save / Cancel · **Save Multitrack Session** (Ctrl+S ในมัลติแทร็ก) บันทึกทับไฟล์เดิม, **Save Multitrack Session As…** · Recent Sessions จำ path จริง
+- **`.asession` รูปแบบ 4 (ZIP)**: `session.json` + เสียงแต่ละก้อนเป็น WAV 32-bit float แยกไฟล์ เขียน/อ่านเป็นชิ้น (มีแถบ % และ Cancel) จึง **ไม่มีเพดานความยาว** (รูปแบบเดิมเก็บเสียงเป็น base64 ใน JSON ก้อนเดียว บันทึกเกิน ~17 นาทีสเตอริโอ 48 kHz ไม่ได้) · ใช้ ZIP64 เมื่อเกิน 4 GB · ตรวจ CRC ตอนเปิด · เช็กพื้นที่ดิสก์ก่อนบันทึก · ไฟล์ v1–v3 เปิดได้เหมือนเดิม · เปิดดูด้วยโปรแกรม zip ทั่วไปได้
+- **File > Open หลายไฟล์ใหญ่**: อ่านทีละไฟล์เป็นชิ้น (มี % และ Cancel) ไม่โหลดทุกไฟล์เข้าหน่วยความจำพร้อมกัน
+- **File > Recover Last Session…**: ปิดแอปปกติแล้วงาน autosave ล่าสุดยังเก็บไว้ (เผลอกด Close Without Saving ก็กู้ได้)
+- **การอัดเสียงเขียนลงดิสก์ระหว่างอัด** (ทุก 5 วินาที) — แอปแครช/ไฟดับระหว่างอัด เปิดใหม่แล้วกู้ take ได้ (Recover interrupted recording)
+- **Export Video with Mixdown**: ตัดเสียงให้ยาวเท่าวิดีโอพอดี (`-t` ความยาววิดีโอ) ไม่เกิน 1 เฟรม
+- **ความปลอดภัย**: หน้าต่างหลักไม่เปิดหน้าต่างใหม่/ไม่เปลี่ยนไปหน้าอื่น (ลิงก์เว็บเปิดในเบราว์เซอร์) · F12 / DevTools เฉพาะตอนรันจากซอร์ส (`npm start`) หรือ `AUDIOSTAGE_DEVTOOLS=1`
+- About แสดงเวอร์ชันจริงจาก `package.json` + `Copyright (c) BYS & RB. All rights reserved by BYS & RB` · license `UNLICENSED`, author `BYS & RB`
 
 ## เพิ่มในเวอร์ชันนี้
 
@@ -186,7 +198,7 @@ npm test           # รันทุกไฟล์ใน tests/ (449 เทส�
 - **FCP XML (Final Cut Pro 7 xmeml)**: File > Export Session as FCP XML… เขียน XML + ไฟล์เสียงของทุกคลิป (WAV 24-bit) ลงโฟลเดอร์ — เปิดได้ใน Premiere Pro, DaVinci Resolve และ Adobe Audition · File > Import FCP XML Session… สร้างเซสชันใหม่จาก XML (หาไฟล์เสียงจาก path ใน XML → ข้างไฟล์ XML → ให้ผู้ใช้เลือก) · ข้อมูลที่ส่ง: แทร็ก, คลิป, ตำแหน่ง, in-point ของต้นฉบับ, gain (clip gain × track volume เป็น Audio Levels), pan, fade in/out (audio transition) · คลิปที่ยืดเวลา/วนซ้ำถูกเขียนเป็นไฟล์เสียงที่เรนเดอร์แล้ว · **ข้อจำกัด**: เวลาใน xmeml เป็นเฟรม (30 fps) ตำแหน่งจึงปัดเป็น 1/30 วินาที, envelope/เอฟเฟกต์/bus/automation ไม่ถูกส่ง, ไม่ได้ทำ .sesx (ดูหมายเหตุใน roadmap)
 - **Media Browser** (แอปเดสก์ท็อป): คลิกไฟล์ = เลือก + พรีวิวทันที (**Auto-play**), **Loop**, ปุ่ม ▶ / ■ · ดับเบิลคลิกเปิด · **ลากไฟล์** ไปวางบนเวฟฟอร์ม (เปิดไฟล์) หรือบนเลนมัลติแทร็ก (เป็นคลิปตรงตำแหน่งที่วาง) · พรีวิวออกลำโพงตรง ไม่เข้า mix/meter
 
-**`.asession` เวอร์ชัน 3** — มีฟิลด์ `version` และ `migrate()` (`app/js/sessionio.js`): ไฟล์เวอร์ชัน 1/2 เปิดได้เหมือนเดิม (เติมค่า routing เริ่มต้น และแปลง clip volume envelope แบบ dB เดิมเป็นค่าเชิงเส้น) · ไฟล์จากเวอร์ชันที่ใหม่กว่าจะแจ้งให้อัปเดตแอปแทนการเปิดผิดๆ
+**`.asession` รูปแบบ 4** — ZIP (`app/js/sessionzip.js`): `session.json` (มีฟิลด์ `version` และ `migrate()` ใน `app/js/sessionio.js`) + `audio/<n>.wav` · ไฟล์ JSON รูปแบบ 1/2/3 เปิดได้เหมือนเดิม (เติมค่า routing เริ่มต้น และแปลง clip volume envelope แบบ dB เดิมเป็นค่าเชิงเส้น) · ไฟล์จากเวอร์ชันที่ใหม่กว่าจะแจ้งให้อัปเดตแอปแทนการเปิดผิดๆ
 
 **เมนู Window** — เปิด/ปิด (มีเครื่องหมายถูก) หรือดึง focus ไปยังแผง: Editor, Multitrack, CD Layout, Diagnostics, Effects, Effects Rack, Essential Sound, Favorites, Files, History, Level Meters, Loudness Meter, Markers, Match Loudness, Media Browser*, Metadata, Mixer, Phase Meter, Playlist, Properties, Selection/View, Spectrum Analyzer, Video, Status Bar, Time Display, Tools, Transport, Workspace (ชุดเลย์เอาต์ — ดูหัวข้อ Workspaces) และ Reset to Default Layout (เลย์เอาต์จำไว้ข้ามการเปิดแอป) — *Media Browser ใช้ได้ในแอปเดสก์ท็อป
 
@@ -240,6 +252,10 @@ app/js/metronome.js         เมโทรนอม (oscillator, lookahead sche
 app/js/clipstretch.js       Clip time-stretch / pitch แบบไม่ทำลาย: แคชเสียงที่เรนเดอร์ใน worker, ปรับสัดส่วน, match tempo
 app/js/recording.js         คณิตของการอัด: latency, punch, loop → takes, comp + crossfade, วัด latency (ทดสอบใน Node)
 app/js/sessionio.js         อ่าน/เขียน .asession พร้อม version + migrate
+app/js/sessionzip.js        .asession รูปแบบ 4: ZIP เขียน/อ่านเป็นชิ้น (ZIP64, CRC)
+app/js/disk.js              Save dialog, เขียนไฟล์เป็นชิ้นแบบ atomic, อ่านไฟล์เป็นชิ้น (แอปเดสก์ท็อป)
+app/js/recspool.js          สำรองเสียงที่กำลังอัดลงดิสก์ + กู้คืน
+electron/savefile.js        เขียนไฟล์ชั่วคราว → fsync → rename, ชื่อไม่ซ้ำ " (2)"
 app/js/videotrack.js        แถววิดีโอในมัลติแทร็ก: thumbnail, ลิงก์ไฟล์
 electron/video.js           หา ffmpeg, probe, mux เสียงกลับเข้าวิดีโอ (ทดสอบใน Node)
 app/js/store.js             ที่เก็บข้อมูลในเครื่อง (ดิสก์ผ่าน preload / IndexedDB / หน่วยความจำสำหรับเทสต์)
@@ -268,7 +284,7 @@ electron/recent.js, openfiles.js, logs.js  รายการ recent, ไฟล�
 tools/make-ico.js           สร้าง build/asession.ico จาก build/icon.png
 app/js/tags.js              แท็ก/เมทาดาทา: ID3v2.4, Vorbis comments + PICTURE, OpusTags, MP4 ilst, WAV INFO (เขียน + อ่าน)
 app/js/speech.js, electron/tts.js   Generate > Speech… (เสียงของ Windows ผ่าน PowerShell, ออฟไลน์)
-app/js/updates.js, electron/updater.js   Help > Check for Updates… (electron-updater + GitHub Releases)
+app/js/updates.js, electron/updater.js   Help > Check for Updates… (ปิด/ซ่อนเมื่อไม่มีแหล่งอัปเดต — อัปเดตผ่าน BYS All Stages Launcher)
 app/js/runtimes.js          หน้าต่าง Install VST Support… / Install ffmpeg… / Check VST / ffmpeg Status…
 tools/vst/                  vst_host.py (pedalboard) + สคริปต์ติดตั้ง
 tests/run-all.js            ตัวรันของ npm test (รันทุก *.test.js ยกเว้น vst_host ที่ต้องใช้ Python: npm run test:vst)
