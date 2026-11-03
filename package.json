@@ -12,7 +12,10 @@
     "dist": "electron-builder --win --publish never",
     "dist:linux": "electron-builder --linux --publish never",
     "dist:all": "electron-builder --win --linux --publish never",
-    "icons": "node tools/make-icons.js && node tools/make-ico.js"
+    "icons": "node tools/make-icons.js && node tools/make-ico.js",
+    "predist": "node tools/make-help.js",
+    "predist:linux": "node tools/make-help.js",
+    "predist:all": "node tools/make-help.js"
   },
   "devDependencies": {
     "electron": "^33.0.0",
