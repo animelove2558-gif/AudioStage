@@ -48,7 +48,7 @@ okAsync('.desktop entry written by electron-builder from build.linux: Name, Icon
 ok('.asession MIME type (shared-mime-info XML) + its icon are installed by the .deb', () => {
   const xml = fs.readFileSync(path.join(ROOT, 'build/linux/audiostage-session.xml'), 'utf8');
   assert(/<mime-type type="application\/x-audiostage-session">/.test(xml) && /<glob pattern="\*\.asession"/.test(xml) && /<icon name="application-x-audiostage-session"\/>/.test(xml));
-  assert(/sub-class-of type="application\/json"/.test(xml), '.asession files are JSON');
+  assert(/sub-class-of type="application\/zip"/.test(xml) && xml.includes('value="PK\\003\\004"'), '.asession files are ZIPs (format 4); older ones JSON');
   assert(/value="\{&quot;app&quot;:&quot;AudioStage&quot;"/.test(xml), 'magic = how every saved session starts');
   const map = Object.fromEntries(B.deb.fpm.map((a) => a.split('=')));
   assert.strictEqual(map['build/linux/audiostage-session.xml'], '/usr/share/mime/packages/audiostage-session.xml');

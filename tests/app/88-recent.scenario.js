@@ -21,7 +21,7 @@ module.exports = async ({ t, AS, app, assert, sleep, env }) => {
   });
   await t('a session reopened from Open Recent Session opens the multitrack', async () => {
     const p = await write('recent.asession', new TextEncoder().encode(JSON.stringify(AS.sessionIO.serialize(app.session))));
-    await R.note('sessions', p); await app.runId('recent:sessions:0'); await sleep(50);
+    await R.note('sessions', p); app.session.dirty = false; await app.runId('recent:sessions:0'); await sleep(50); // (no unsaved changes: opening asks otherwise)
     assert(app.mode === 'multi', app.mode); app.setMode('wave');
   });
   await t('a file that was deleted: warned, removed from the list; Clear Recent empties it', async () => {

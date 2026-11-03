@@ -145,20 +145,39 @@
     /* an undoable change that keeps the audio (tempo, …) */
     setMeta(label, fn) { this.undoStack.push(this.snap(label)); if (this.undoStack.length > 40) this.undoStack.shift(); this.redoStack = []; fn(this); this.dirty = true; } // (no version bump: the audio is unchanged)
     set(ch, label, sel, sr) {
-      this.undoStack.push(this.snap(label)); if (this.undoStack.length > 40) this.undoStack.shift();
+      const s = this.snap(label);
+      this.undoStack.push(s); if (this.undoStack.length > 40) this.undoStack.shift();
       this.redoStack = [];
       this.ch = ch; if (sr) this.sr = sr; this.version++; this.dirty = true; this.spec = null;
       if (this.chOn.length !== ch.length) this.chOn = ch.map(() => true);
       if (sel) this.sel = sel;
       this.clampSel();
+      toDiff(s, this.ch); this.trimUndo();
+    }
+    /* Undo memory: every step that changed the audio keeps the audio as it was. A step that changed only a part
+       (an effect on a selection) keeps only that part (toDiff); the steps together stay within a byte budget
+       (Doc.undoBudget: a quarter of the memory, at most 1.5 GB) — the oldest are dropped first (at least the last
+       step is kept), and the app is told once (Doc.onTrim) */
+    undoBytes() { let n = 0; const seen = new Set(this.ch); for (const s of [...this.undoStack, ...this.redoStack]) n += snapBytes(s, seen); return n; }
+    trimUndo() {
+      let dropped = 0; const budget = Doc.undoBudget();
+      while (this.undoStack.length > 1 && this.undoBytes() > budget) { this.undoStack.shift(); dropped++; }
+      if (dropped && Doc.onTrim) Doc.onTrim(this, dropped);
+      return dropped;
     }
     clampSel() { const L = this.len; this.sel.a = D.clamp(this.sel.a, 0, L); this.sel.b = D.clamp(this.sel.b, this.sel.a, L); }
     /* every marker gets a stable id (markers read from WAV cue points have none) */
     markerIds() { for (const m of this.markers) if (!m.id) m.id = 'm' + (Doc.mk = (Doc.mk || 0) + 1); return this.markers; }
     /* range markers in time order, as {id, name, a, b} (samples) */
     ranges() { return this.markerIds().filter((m) => m.d > 0).sort((p, q) => p.t - q.t).map((m) => ({ id: m.id, name: m.name, a: m.t, b: Math.min(this.len, m.t + m.d) })); }
-    undo() { const s = this.undoStack.pop(); if (!s) return null; this.redoStack.push(this.snap(s.label)); this.restore(s); return s.label; }
-    redo() { const s = this.redoStack.pop(); if (!s) return null; this.undoStack.push(this.snap(s.label)); this.restore(s); return s.label; }
+    undo() { return this.step(this.undoStack, this.redoStack); }
+    redo() { return this.step(this.redoStack, this.undoStack); }
+    step(from, to) {
+      const s = from.pop(); if (!s) return null;
+      const back = this.snap(s.label), ch = fromDiff(s, this.ch);
+      this.restore({ ...s, ch }); toDiff(back, this.ch); to.push(back);
+      return s.label;
+    }
     restore(s) { this.ch = s.ch; this.spec = null; this.tempo = s.tempo || null; if (this.chOn.length !== s.ch.length) this.chOn = s.ch.map(() => true); this.sr = s.sr; this.sel = s.sel; this.markers = s.markers; this.playlist = s.playlist || []; this.version++; this.dirty = true; this.clampSel(); }
     audioBuffer() {
       if (!this._ab || this._abV !== this.version) { this._ab = AS.engine.toBuffer(this.ch, this.sr); this._abV = this.version; }
@@ -166,6 +185,36 @@
     }
     peaks() { if (!this._pk || this._pkV !== this.version) { this._pk = new Peaks(this.ch); this._pkV = this.version; } return this._pk; }
   }
+
+  /* ---- undo snapshots that keep only the changed part of the audio ---- */
+  /* turn snapshot s (s.ch = the audio before) into a diff against cur (the audio after), per channel:
+     same array → { same }, a changed range of at most half the file → { a, old } (the samples before), else { full } */
+  function toDiff(s, cur) {
+    if (!s.ch || s.ch.length !== cur.length) return s;
+    const parts = []; let saved = false;
+    for (let c = 0; c < cur.length; c++) {
+      const x = s.ch[c], y = cur[c];
+      if (x === y) { parts.push({ same: true }); continue; }
+      if (x.length !== y.length) { parts.push({ full: x }); continue; }
+      let a = 0, b = x.length; while (a < b && x[a] === y[a]) a++; while (b > a && x[b - 1] === y[b - 1]) b--;
+      if (b - a > x.length / 2) parts.push({ full: x }); else { parts.push({ a, old: x.slice(a, b) }); saved = true; }
+    }
+    if (saved) { s.parts = parts; s.ch = null; }
+    return s;
+  }
+  /* the audio a (diff) snapshot stands for, given the current audio */
+  function fromDiff(s, cur) {
+    if (!s.parts) return s.ch;
+    return s.parts.map((p, c) => { if (p.same) return cur[c]; if (p.full) return p.full; const y = cur[c].slice(); y.set(p.old, p.a); return y; });
+  }
+  function snapBytes(s, seen) {
+    let n = 0; const add = (arr) => { if (arr && !seen.has(arr)) { seen.add(arr); n += arr.byteLength; } };
+    if (s.parts) for (const p of s.parts) { if (p.full) add(p.full); if (p.old) n += p.old.byteLength; } else for (const c of s.ch || []) add(c);
+    return n;
+  }
+  Doc.undoBudget = () => { const gb = 1024 * 1024 * 1024, mem = (root.navigator && root.navigator.deviceMemory) || 4; return Math.min(1.5 * gb, (mem * gb) / 4); };
+  Doc.onTrim = null;
+  AS.undoDiff = { toDiff, fromDiff, snapBytes };
 
   class Peaks {
     constructor(chs, block) {

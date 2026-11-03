@@ -33,7 +33,7 @@ module.exports = async ({ t, AS, app, assert, sleep, env }) => {
     const s0 = AS.actions['file.saveAs'](); await until(() => modal() && modal().querySelector('[data-id="fmt"]'));
     assert(modal().querySelector('[data-id="fmt"]').value === 'flac24'); modal().querySelector('[data-act="cancel"]').click(); await s0;
     P.set('files.sessSr', 48000); P.set('files.sessBits', 32); P.set('mt.xfade', false); P.set('mt.overlap', 'overwrite'); P.set('mt.trackVol', -6);
-    const q = AS.actions['mt.new'](); await until(() => modal()); modal().querySelector('[data-act="ok"]').click(); await q; await sleep(30);
+    app.session.dirty = false; const q = AS.actions['mt.new'](); await until(() => modal()); modal().querySelector('[data-act="ok"]').click(); await q; await sleep(30);
     const s = app.session;
     assert(s.sr === 48000 && s.bits === 32 && s.opts.xfade === false && s.opts.overlap === 'overwrite', JSON.stringify({ sr: s.sr, bits: s.bits, o: s.opts }));
     assert(s.tracks.every((tr) => tr.vol === -6) && s.addTrack().vol === -6, 'new tracks: -6 dB');
@@ -66,7 +66,7 @@ module.exports = async ({ t, AS, app, assert, sleep, env }) => {
     m.querySelector('[data-act2="reset"]').click(); await until(() => modal() && modal() !== m); modal().querySelector('[data-act="ok"]').click(); await p;
     assert(P.get('files.newSr') === 48000 && P.get('files.exportFmt') === 'wav24' && P.get('mt.trackVol') === 0 && P.get('display.timeFmt') === 'time');
     assert(app.recSettings.latencyMs === 0 && app.autosaveOpts.minutes === 2 && AS.spectral.settings().fft === 2048 && P.get('rec.folder') === '');
-    const q = AS.actions['mt.new'](); await until(() => modal()); modal().querySelector('[data-act="ok"]').click(); await q;
+    app.session.dirty = false; const q = AS.actions['mt.new'](); await until(() => modal()); modal().querySelector('[data-act="ok"]').click(); await q;
     assert(app.session.sr === 44100 && app.session.opts.xfade === true && app.session.tracks[0].vol === 0, 'a new session uses the defaults again');
   });
 };

@@ -26,6 +26,8 @@
       }
       html += '</div><div class="modal-foot">';
       if (opts.preview) html += '<button class="btn" data-act="preview">▶ Preview</button>';
+      // opts.extraButtons: [{id, label}] — closes the dialog with that id (e.g. "Don't Save")
+      for (const b of opts.extraButtons || []) html += `<button class="btn" data-act="x:${esc(b.id)}">${esc(b.label)}</button>`;
       html += `<span class="spacer"></span><button class="btn" data-act="cancel">${opts.cancelLabel || 'Cancel'}</button>${opts.noOk ? '' : `<button class="btn primary" data-act="ok">${esc(opts.okLabel || 'OK')}</button>`}</div>`;
       box.innerHTML = html; back.appendChild(box); rootEl.appendChild(back); openCount++;
       for (const f of opts.fields || []) if (f.tip) { const el = box.querySelector(`[data-id="${f.id}"],[data-curve="${f.id}"]`), row = el && el.closest('.frow'); if (row) row.title = f.tip; } // what the setting does
@@ -59,7 +61,7 @@
       document.addEventListener('keydown', onKey, true);
       box.addEventListener('click', (e) => {
         const a = e.target.dataset && e.target.dataset.act;
-        if (a === 'ok') close({ ...values }); else if (a === 'cancel') close(null);
+        if (a === 'ok') close({ ...values }); else if (a === 'cancel') close(null); else if (a && a.startsWith('x:')) close(a.slice(2));
         else if (a === 'preview') { previewing ? stopPrev() : startPrev(); }
         if (opts.onClick) opts.onClick(e, box);
       });
@@ -83,6 +85,8 @@
     await new Promise((r) => setTimeout(r, 40));
     try { return await fn(); } finally { el.hidden = true; btn.onclick = null; }
   }
+  /* new text for the busy overlay while it is shown (progress) */
+  function busyMsg(msg) { const el = document.getElementById('busy'); if (el && !el.hidden) el.querySelector('span').textContent = msg; }
 
   /* -------- curve editor: draggable points on a canvas --------
      opts: {W,H, pts, kx:'x', ky:'y', xMin,xMax, yMin,yMax, xLog, xTicks:[[v,label]], yTicks:[[v,label]], fixedEnds, minPts, onChange}  */
@@ -219,5 +223,5 @@
       },
       close: closeAll, refreshKeys: rebuildKeys,
     };
-  }  AS.ui = { dialog, dialogOpen, toast, busy, buildMenus, esc, curveEditor };
+  }  AS.ui = { dialog, dialogOpen, toast, busy, busyMsg, buildMenus, esc, curveEditor };
 })(window);

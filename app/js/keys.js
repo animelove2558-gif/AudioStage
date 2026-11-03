@@ -7,7 +7,7 @@
   /* Adobe Audition (Windows) default keys for the commands AudioStage has — where Audition differs from AudioStage's
      own defaults. Commands not listed keep the AudioStage key. */
   const AUDITION = {
-    'edit.redo': 'Ctrl+Shift+Z', 'file.save': 'Ctrl+Shift+S', 'file.new': 'Ctrl+Shift+N', 'mt.new': 'Ctrl+N',
+    'edit.redo': 'Ctrl+Shift+Z', 'file.new': 'Ctrl+Shift+N', 'mt.new': 'Ctrl+N',
     'view.zin': '=', 'view.zout': '-', 'view.zall': '\\', 'mt.split': 'Ctrl+K', 'mt.snap': 'S',
     'view.spec': 'Shift+D', 'tp.metro': 'Shift+C', 'an.freq': 'Alt+Z',
     'edit.prefs': '', // Ctrl+K is Split in this preset; Preferences stays in the Edit menu

@@ -9,6 +9,7 @@ module.exports = async ({ t, AS, app, assert, sleep, env }) => {
     const sess = await write('double-click.asession', new TextEncoder().encode(JSON.stringify(AS.sessionIO.serialize(s))));
     const wav = await write('open-with.wav', new Uint8Array(AS.wav.encodeWav([new Float32Array(2205).fill(0.1)], 22050, 16, false)));
     const n = app.docs.length;
+    app.session.dirty = false; // (opening a session over unsaved changes asks first)
     await window.audioStageOpen.testSecondInstance(['AudioStage.exe', '--some-flag', sess, wav, env.tmp], env.tmp);
     assert(await until(() => app.docs.length === n + 1), 'audio opened');
     const d = app.docs[app.docs.length - 1]; assert(d.name === 'open-with.wav' && d.sr === 22050, d.name);

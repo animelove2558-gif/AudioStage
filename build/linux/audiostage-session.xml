@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- AudioStage multitrack sessions (.asession, JSON): installed by the .deb into /usr/share/mime/packages
+<!-- AudioStage multitrack sessions (.asession: a ZIP with session.json + audio since AudioStage 2.1, JSON before):
+     installed by the .deb into /usr/share/mime/packages
      (update-mime-database runs after install). The file icon is application-x-audiostage-session in hicolor/<n>x<n>/mimetypes. -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-audiostage-session">
     <comment>AudioStage multitrack session</comment>
     <comment xml:lang="th">เซสชันมัลติแทร็ก AudioStage</comment>
-    <sub-class-of type="application/json"/>
+    <sub-class-of type="application/zip"/>
     <generic-icon name="audio-x-generic"/>
     <icon name="application-x-audiostage-session"/>
     <glob pattern="*.asession" weight="80"/>
     <magic priority="60">
       <match type="string" offset="0" value="{&quot;app&quot;:&quot;AudioStage&quot;"/>
+      <match type="string" offset="0" value="PK\003\004">
+        <match type="string" offset="30" value="audio/"/>
+        <match type="string" offset="30" value="session.json"/>
+      </match>
     </magic>
   </mime-type>
 </mime-info>

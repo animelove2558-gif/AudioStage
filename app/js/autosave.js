@@ -44,9 +44,10 @@
       if (!d.dirty) continue;
       const key = 'audio/' + docUid(d) + '-v' + d.version + '.wav';
       if (!known.has(key)) { await store.put(key, wavOf(d.ch, d.sr)); known.add(key); }
-      docs.push({ key, name: d.name, sel: d.sel, markers: d.markers, playlist: d.playlist || [], tempo: d.tempo || null, meta: d.meta || null, uid: docUid(d) });
+      docs.push({ key, name: d.name, sel: d.sel, markers: d.markers, playlist: d.playlist || [], tempo: d.tempo || null, meta: d.meta || null, uid: docUid(d), path: d.path || '' });
     }
-    const manifest = { app: 'AudioStage', kind: 'autosave', time: Date.now(), mode: state.mode || 'wave', session: pack, docs, tracks: state.session.tracks.length, clips: state.session.tracks.reduce((a, t) => a + t.clips.length, 0) };
+    const sf = state.session.filePath || state.session.fileName ? { name: state.session.fileName || '', path: state.session.filePath || '' } : null;
+    const manifest = { app: 'AudioStage', kind: 'autosave', time: Date.now(), mode: state.mode || 'wave', session: pack, ...(sf ? { sessionFile: sf } : {}), docs, tracks: state.session.tracks.length, clips: state.session.tracks.reduce((a, t) => a + t.clips.length, 0) };
     await store.put('autosave.json', JSON.stringify(manifest));
     await gc(store);
     return manifest;
@@ -55,9 +56,17 @@
   async function restore(store, manifest) {
     const session = await unpackSession(store, manifest.session), docs = [];
     for (const m of manifest.docs || []) { const u = await store.get(m.key); if (!u) continue; const w = unwav(u); docs.push({ ...m, sr: w.sr, ch: w.ch }); }
-    return { session, docs, mode: manifest.mode };
+    return { session, docs, mode: manifest.mode, sessionFile: manifest.sessionFile || null };
   }
   const discard = async (store) => { await store.del('autosave.json'); await gc(store); };
+  /* after a normal exit the autosave is not thrown away at once: it becomes "the last session" (last.json), which
+     File > Recover Last Session… restores until the next normal exit replaces it (G8: a "Close Without Saving" by
+     mistake can still be undone). Its audio is kept by gc like the autosave's. */
+  async function keepAsLast(store) {
+    const u = await store.get('autosave.json'); if (!u) return false;
+    await store.put('last.json', u); await store.del('autosave.json'); await gc(store); return true;
+  }
+  const readLast = (store) => store.getJSON('last.json');
 
   /* ---------- project versions ---------- */
   async function saveVersion(store, name, session) {
@@ -77,7 +86,7 @@
   /* delete audio files that neither the autosave nor any version refers to */
   async function gc(store) {
     const keep = new Set(), add = (m) => { if (!m) return; for (const id of Object.keys((m.session && m.session.srcMeta) || {})) keep.add('audio/' + id + '.wav'); for (const d of m.docs || []) keep.add(d.key); };
-    add(await store.getJSON('autosave.json'));
+    add(await store.getJSON('autosave.json')); add(await store.getJSON('last.json'));
     for (const k of await store.list('versions/')) add(await store.getJSON(k));
     let n = 0; for (const k of await store.list('audio/')) if (!keep.has(k)) { await store.del(k); n++; }
     return n;
@@ -92,5 +101,5 @@
     return crashed;
   }
 
-  AS.autosave = { saveNow, readAutosave, restore, discard, saveVersion, listVersions, loadVersion, deleteVersion, gc, boot, packSession, unpackSession, sidOf };
+  AS.autosave = { saveNow, readAutosave, restore, discard, keepAsLast, readLast, saveVersion, listVersions, loadVersion, deleteVersion, gc, boot, packSession, unpackSession, sidOf };
 })(typeof window !== 'undefined' ? window : globalThis);

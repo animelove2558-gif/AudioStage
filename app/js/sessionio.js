@@ -6,11 +6,13 @@
                             clip volume envelope stored as linear gain ("volume"; older dB "vol" is converted),
                             "settings" (crossfades, overlap policy, tempo…; missing = older file: crossfades off),
                             clip stacking order (clip "z", settings.stack; missing = older file: z from the clip order,
-                            stacking off so overlapping clips still sum as before) */
+                            stacking off so overlapping clips still sum as before)
+     4  "version": 4        the file is a ZIP (sessionzip.js): session.json + one 32-bit float WAV per source; sources
+                            list {name, sr, channels, frames, file} instead of base64 audio. Older JSON files still open. */
 (function (root) {
   'use strict';
   const AS = (root.AS = root.AS || {});
-  const VERSION = 3;
+  const VERSION = 4;
 
   const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
   const unb64 = (s) => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
@@ -28,7 +30,9 @@
 
   /* bring any older file up to the current format (pure: returns a new object, input untouched) */
   function migrate(j0) {
-    const j = JSON.parse(JSON.stringify(j0));
+    // deep copy of everything but the (possibly huge) base64 audio strings, which are never changed
+    const { sources, ...rest } = j0 || {}, j = JSON.parse(JSON.stringify(rest));
+    j.sources = Array.isArray(sources) ? sources.slice() : [];
     const from = +(j.version || j.v || 1);
     if (from > VERSION) throw new Error(`This session was saved by a newer AudioStage (format ${from}). Please update the app.`);
     j.master = j.master || { vol: 0, fx: [] };
@@ -50,7 +54,8 @@
   /* plain object (any version) -> Session */
   function deserialize(j0, opts) {
     const j = migrate(j0);
-    const srcs = (j.sources || []).map((s) => Object.assign(AS.makeSource(s.name, s.sr, s.ch.map(decCh)), s.tempo ? { tempo: s.tempo } : {}));
+    // opts.sources: the audio already loaded from a format-4 ZIP (sessionzip.js), in the order of the file's list
+    const srcs = opts && opts.sources ? opts.sources : (j.sources || []).map((s) => Object.assign(AS.makeSource(s.name, s.sr, s.ch.map(decCh)), s.tempo ? { tempo: s.tempo } : {}));
     const get = (r) => (typeof r === 'string' ? opts.source(r) : srcs[r]); // index into the file, or an external id
     const s = new AS.Session();
     if (j.sr) s.sr = +j.sr; s.bits = +j.bits || 24; // the session's sample rate / bit depth (older files: 44.1 kHz, 24-bit)

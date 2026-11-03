@@ -47,6 +47,8 @@
   const status = (m) => { $('#statusMsg').textContent = m; };
 
   /* ================= Documents ================= */
+  // undo memory limit (engine.js Doc.undoBudget): say once per file when old steps had to go
+  AS.Doc.onTrim = (d) => { if (d.trimNoted) return; d.trimNoted = true; UI.toast(`Older undo steps of “${d.name}” were removed to keep memory use within the undo limit.`); };
   function addDoc(name, sr, ch) {
     const d = new AS.Doc(name, sr, ch); AS.welcome.hide();
     app.docs.push(d); setCurrent(d); return d;
@@ -66,8 +68,8 @@
     setCurrent(app.docs[Math.max(0, i - 1)] || null);
   }
   /* File -> {sr, ch, markers?, cart?, bext?} (own WAV reader first, then the system decoder) */
-  async function decodeFile(f) {
-    const buf = await f.arrayBuffer();
+  async function decodeFile(f, pre) {
+    const buf = pre || (await f.arrayBuffer());
     let res = null;
     if (/\.(wav|wave)$/i.test(f.name)) { try { res = AS.wav.decodeWav(buf); } catch (e) { res = null; } }
     try { res && (res.tags = AS.tags.read(new Uint8Array(buf))); } catch (e) { /* no tags */ }
@@ -76,20 +78,30 @@
       const ab = await eng.ctx.decodeAudioData(buf.slice(0));
       res = { sr: ab.sampleRate, ch: Array.from({ length: ab.numberOfChannels }, (_, i) => ab.getChannelData(i).slice()), tags: AS.tags.read(new Uint8Array(buf)) };
     }
+    if (pre) res.buf = buf; // (a file read from disk in pieces: kept for the video preview)
     return res;
   }
+  /* files: File objects, or files read from disk only now, one at a time (AS.disk.lazyFile: File > Open, recent
+     files, files from Windows) — so opening many large files never holds them all in memory at once */
   async function openFiles(files) {
+    let stopAll = false;
     for (const f of files) {
+      if (stopAll) break;
+      const ctl = { aborted: false };
       try {
         await UI.busy('Opening ' + f.name + '…', async () => {
-          const res = await decodeFile(f);
+          const pre = f.lazy ? await f.arrayBuffer({ signal: ctl, onProgress: (a, n) => UI.busyMsg(`Reading ${f.name}… ${Math.round((100 * a) / Math.max(1, n))} %`) }) : null;
+          const res = await decodeFile(f, pre);
           const nd = addDoc(f.name, res.sr, res.ch);
-          if (/^video\//.test(f.type) || /\.(mp4|mov|mkv|webm|m4v)$/i.test(f.name)) { nd.videoUrl = URL.createObjectURL(f); updateVideo(); }
+          if (res.bits) nd.bits = res.bits;
+          nd.path = f.asPath || (window.audioStageRecent ? window.audioStageRecent.pathOf(f) : '') || ''; nd.savable = !!f.asPath; // Save writes back there (files opened through the app)
+          if (/^video\//.test(f.type) || /\.(mp4|mov|mkv|webm|m4v)$/i.test(f.name)) { nd.videoUrl = URL.createObjectURL(f.lazy ? new Blob([res.buf]) : f); updateVideo(); }
+          res.buf = null;
           if (res.markers && res.markers.length) { nd.markers = res.markers; updateMarkers(); }
           nd.meta = AS.tags.clean({ title: (res.cart && res.cart.title) || (res.bext && res.bext.description) || '', artist: (res.cart && res.cart.artist) || '', ...(res.tags || {}) }); // kept, so saving again keeps the tags
-        });
+        }, f.lazy ? () => { ctl.aborted = true; stopAll = true; } : undefined);
         AS.recent.note('files', f); // File > Open Recent
-      } catch (e) { UI.toast(`Cannot open “${f.name}”: ${e.message || 'unsupported format'}`, 'error'); }
+      } catch (e) { if (e && e.cancelled) { UI.toast('Opening cancelled.'); stopAll = true; } else UI.toast(`Cannot open “${f.name}”: ${e.message || 'unsupported format'}`, 'error'); }
     }
     if (app.mode === 'multi') setMode('wave');
   }
@@ -380,16 +392,16 @@
     try {
       const bytes = await UI.busy('Saving back to EditorStage…', async () => AS.wav.encodeWav(d.ch, d.sr, 24, false, d.markers.length ? { markers: d.markers } : null));
       const r = await window.audioStageExt.save(d.extPath, new Uint8Array(bytes)); if (!r.ok) throw new Error(r.error);
-      d.dirty = false; updateFiles(); status('Saved back to EditorStage: ' + d.name);
-    } catch (e) { reportErr(e); }
+      d.dirty = false; updateFiles(); status('Saved back to EditorStage: ' + d.name); return true;
+    } catch (e) { reportErr(e); return false; }
   }
   /* files Windows opened with AudioStage: a .asession opens the multitrack, audio files open in Waveform */
   async function openShellFiles(list) {
     for (const f of list) {
-      const r = await window.audioStageOpen.read(f.path);
-      if (!r.ok) { UI.toast(`Cannot open “${f.path}”: ${r.error}`, 'error'); continue; }
-      if (r.missing) { UI.toast(`“${f.path}” was not found.`, 'error'); continue; }
-      const file = Object.assign(new File([r.data], r.name), { asPath: f.path });
+      let src = null;
+      try { src = await AS.disk.source(f.path); } catch (e) { UI.toast(`Cannot open “${f.path}”: ${e.message}`, 'error'); continue; }
+      if (!src) { UI.toast(`“${f.path}” was not found.`, 'error'); continue; }
+      const file = AS.disk.lazyFile(src); // read only now, in pieces
       if (f.kind === 'session') await loadSession(file); else await openFiles([file]);
     }
   }
@@ -410,7 +422,7 @@
   }
   const actions = {
     'file.new': newFile, 'file.open': () => openDialog('files'), 'file.close': () => closeDoc(app.cur), 'file.closeall': async () => { for (const d of app.docs.slice()) await closeDoc(d); },
-    'file.save': () => (app.cur && app.cur.extPath ? saveBackToEditorStage(app.cur) : exportDoc(false)), 'file.saveAs': () => exportDoc(false), 'file.saveSel': () => exportDoc(true), 'file.info': fileInfo, 'file.exportMix': exportMix, 'file.saveSession': saveSession, 'file.openSession': () => openDialog('sessions'), 'file.exit': () => window.close(),
+    'file.save': () => (app.mode === 'multi' ? saveSession(false) : saveDoc('save')), 'file.saveAs': () => saveDoc('as'), 'file.saveSel': () => saveDoc('sel'), 'file.info': fileInfo, 'file.exportMix': exportMix, 'file.saveSession': () => saveSession(false), 'file.saveSessionAs': () => saveSession(true), 'file.recoverLast': recoverLast, 'file.openSession': () => openDialog('sessions'), 'file.exit': () => window.close(),
     'edit.undo': () => { if (app.mode === 'multi') { if (app.session.undo()) { multi.rebuildHeads(); multi.resize(); AS.panels.refreshAll(); } return; } if (!needDoc()) return; if (eng.playing) stop(false); const l = app.cur.undo(); if (l) { status('Undo ' + l); wave.specCache = null; wave.draw(); updateInfo(); updateFiles(); } },
     'edit.redo': () => { if (app.mode === 'multi') { if (app.session.redo()) { multi.rebuildHeads(); multi.resize(); AS.panels.refreshAll(); } return; } if (!needDoc()) return; if (eng.playing) stop(false); const l = app.cur.redo(); if (l) { status('Redo ' + l); wave.specCache = null; wave.draw(); updateInfo(); updateFiles(); } },
     'edit.cut': () => { if (app.mode === 'multi') { if (app.session.sel) { app.clipClip = { ...app.session.findClip(app.session.sel).c }; deleteClip(); } return; } if (!needDoc() || !copyRange()) return; const d = app.cur; commit(d, D.spliceCh(d.ch, d.sel.a, d.sel.b, null), 'Cut', { a: d.sel.a, b: d.sel.a }); },
@@ -457,7 +469,12 @@
     'tp.start': () => goto(0), 'tp.end': () => goto(Infinity),
     'mt.insert': () => needDoc() && insertDocIntoMulti(app.cur), 'mt.addtrack': () => { app.session.push(); app.session.addTrack(); multi.rebuildHeads(); multi.resize(); },
     'mt.split': splitAtPlayhead, 'mt.dup': dupClip, 'mt.props': () => app.session.sel && clipProperties(app.session.sel), 'mt.snap': () => { multi.snap = !multi.snap; },
-    'mt.mixnew': mixToNew, 'mt.new': async () => { const r = await UI.dialog({ title: 'New Multitrack Session', html: '<p>Discard the current session?</p>', okLabel: 'New Session' }); if (r) { app.session = newSession(); multi.s = app.session; multi.rebuildHeads(); multi.resize(); setMode('multi'); } },
+    'mt.mixnew': mixToNew, 'mt.new': async () => {
+      const s = app.session;
+      if (s.dirty && (s.tracks.some((t) => t.clips.length) || s.filePath)) { if (!(await confirmSessionClose('New Multitrack Session'))) return; }
+      else if (!(await UI.dialog({ title: 'New Multitrack Session', html: '<p>Discard the current session?</p>', okLabel: 'New Session' }))) return;
+      if (eng.playing) stop(false); app.session = newSession(); multi.s = app.session; multi.rebuildHeads(); multi.resize(); setMode('multi'); updateTitle();
+    },
     'sp.atten': () => spectralGain(-1), 'sp.amp': () => spectralGain(1), 'sp.delete': () => spectralApply('atten', -120, 'Spectral Delete'), 'sp.heal': () => spectralApply('heal', 0, 'Spectral Spot Heal'), 'sp.clear': () => { if (app.cur) { app.cur.spec = null; wave.draw(); app.specChanged(); } },
     // (single-key shortcuts: only in the Waveform editor)
     'sp.tool.time': () => { if (app.mode === 'wave') setTool('time'); }, 'sp.tool.marquee': () => app.mode === 'wave' && setTool('marquee'), 'sp.tool.lasso': () => app.mode === 'wave' && setTool('lasso'),
@@ -1020,16 +1037,52 @@
     const f = FORMATS[fmtKey], buf = await encodeBytes(ch, sr, fmtKey, dither, null, extra);
     download(buf, baseName + '.' + f.ext, f.mime);
   }
-  async function exportDoc(selOnly) {
-    if (!needDoc()) return; const d = app.cur;
-    const r = await exportOptions('Save As', d.hasSel() && !selOnly ? true : false, d.bits);
-    if (!r) return;
-    const useSel = selOnly ? d.hasSel() : r.sel;
-    const [a, b] = useSel && d.hasSel() ? [d.sel.a, d.sel.b] : [0, d.len];
-    d.meta = AS.tags.clean({ ...d.meta, title: r.title, artist: r.artist }); // one set of metadata: the dialog and File Info share it
-    const extra = r.meta ? { markers: d.markers.filter((m) => m.t >= a && m.t <= b).map((m) => ({ t: m.t - a, name: m.name, ...(m.d > 0 ? { d: Math.min(m.d, b - m.t) } : {}) })), bext: { description: r.title || d.name, originator: 'AudioStage' }, cart: { title: r.title || d.name, artist: r.artist || '' }, tags: d.meta } : null;
-    try { await encodeDownload(D.sliceCh(d.ch, a, b), d.sr, d.name.replace(/\.\w+$/, ''), r.fmt, r.dither, extra); d.dirty = false; updateFiles(); } catch (e) { reportErr(e); }
+  /* the format File > Save keeps for a file opened from disk without asking: lossless ones only (WAV at the file's
+     own bit depth, FLAC); a lossy file (MP3, …) asks once with the Save As options, then Save repeats those */
+  function fmtForPath(p, d) {
+    const ext = ((/\.(\w+)$/.exec(p || '') || [])[1] || '').toLowerCase();
+    if (ext === 'wav' || ext === 'wave') return 'wav' + ([16, 24, 32].includes(d.bits) ? d.bits : 24);
+    if (ext === 'flac') return d.bits === 16 ? 'flac16' : 'flac24';
+    return null;
   }
+  const docSig = (d) => d.version + ':' + d.undoStack.length + ':' + d.redoStack.length;
+  /* mode: 'save' (File > Save, Ctrl+S: the file it came from / was last saved to), 'as' (Save As…), 'sel' (Save
+     Selection As…). The file counts as saved (dirty cleared) only after the whole file was written; Cancel in the
+     Save dialog or a failed write keeps it unsaved. Returns true when written. */
+  async function saveDoc(mode, dd) {
+    if (!dd && !needDoc()) return false; const d = dd || app.cur;
+    if (mode === 'save' && d.extPath) return saveBackToEditorStage(d);
+    const disk = AS.disk.available;
+    let o = null, target = null, useSel = false;
+    if (mode === 'save' && disk && d.path && d.savable) { const k = d.saveOpts ? d.saveOpts.fmt : fmtForPath(d.path, d); if (k && FORMATS[k]) { o = d.saveOpts || { fmt: k, dither: true, meta: true }; target = d.path; } }
+    if (!o) {
+      const r = await exportOptions(mode === 'sel' ? 'Save Selection As' : 'Save As', d.hasSel() && mode !== 'sel', d.bits);
+      if (!r) return false;
+      useSel = mode === 'sel' ? d.hasSel() : !!r.sel;
+      d.meta = AS.tags.clean({ ...d.meta, title: r.title, artist: r.artist }); // one set of metadata: the dialog and File Info share it
+      o = { fmt: r.fmt, dither: r.dither, meta: r.meta };
+    }
+    const f = FORMATS[o.fmt], base = d.name.replace(/\.\w+$/, ''), [a, b] = useSel && d.hasSel() ? [d.sel.a, d.sel.b] : [0, d.len];
+    const extra = o.meta ? { markers: d.markers.filter((m) => m.t >= a && m.t <= b).map((m) => ({ t: m.t - a, name: m.name, ...(m.d > 0 ? { d: Math.min(m.d, b - m.t) } : {}) })), bext: { description: (d.meta && d.meta.title) || d.name, originator: 'AudioStage' }, cart: { title: (d.meta && d.meta.title) || d.name, artist: (d.meta && d.meta.artist) || '' }, tags: d.meta } : null;
+    const sig = docSig(d);
+    try {
+      if (!disk) { await encodeDownload(D.sliceCh(d.ch, a, b), d.sr, base, o.fmt, o.dither, extra); if (!useSel) { d.dirty = false; updateFiles(); } return true; } // browser: a download
+      if (!target) {
+        const nm = base + (useSel ? ' (selection)' : '') + '.' + f.ext;
+        target = await AS.disk.chooseSave({ title: mode === 'sel' ? 'Save Selection As' : 'Save As', name: nm, path: d.path ? AS.disk.join(AS.disk.dirOf(d.path), nm) : '', filters: [{ name: f.label, extensions: [f.ext] }] });
+        if (!target) { status('Not saved.'); return false; }
+      }
+      const buf = await encodeBytes(D.sliceCh(d.ch, a, b), d.sr, o.fmt, o.dither, null, extra);
+      await UI.busy('Writing ' + AS.disk.baseName(target) + '…', () => AS.disk.writeBytes(target, buf, { onProgress: (x, n) => UI.busyMsg(`Writing ${AS.disk.baseName(target)}… ${Math.round((100 * x) / Math.max(1, n))} %`) }));
+    } catch (e) { reportErr(e); return false; }
+    if (!useSel) {
+      d.path = target; d.savable = true; d.saveOpts = o; d.name = AS.disk.baseName(target);
+      if (docSig(d) === sig) d.dirty = false; // (changed while it was being written: still unsaved)
+      AS.recent.note('files', target);
+    }
+    updateFiles(); status('Saved ' + target); return true;
+  }
+  app.saveDoc = saveDoc;
   /* File > File Info / Metadata…: title, artist, album, year, genre, track, comment and a cover image for the open file —
      written when it is saved (ID3v2.4 / Vorbis comments / MP4 atoms / WAV INFO; Title + Artist also go into BWF / CART) */
   async function fileInfo() {
@@ -1059,11 +1112,20 @@
     const r = surround
       ? await UI.dialog({ title: 'Export Multitrack Mixdown (5.1)', okLabel: 'Save', fields: [{ id: 'fmt', label: 'Format', type: 'select', options: Object.entries(FORMATS).filter(([, v]) => v.format === 'wav').map(([k, v]) => [k, v.label]), value: 'wav24' }, { id: 'dither', label: 'Apply TPDF dither (16-bit WAV)', type: 'check', value: true }, { id: 'n', type: 'note', label: '5.1 mixdowns are written as 6-channel WAV (L R C LFE Ls Rs, WAVE_FORMAT_EXTENSIBLE with the 5.1 speaker mask). MP3 / AAC / Opus encoders here are stereo only.' }] })
       : await exportOptions('Export Multitrack Mixdown', false, app.session.bits);
-    if (!r) return;
+    if (!r) return null;
     try {
+      const f = FORMATS[r.fmt], base = (app.session.fileName ? app.session.fileName.replace(/\.asession$/i, '') + ' ' : '') + (surround ? 'Mixdown 5.1' : 'Mixdown');
+      let target = null;
+      if (AS.disk.available) { // ask where first, so a cancelled dialog does not cost a render
+        target = await AS.disk.chooseSave({ title: 'Export Multitrack Mixdown', name: base + '.' + f.ext, path: app.session.filePath ? AS.disk.join(AS.disk.dirOf(app.session.filePath), base + '.' + f.ext) : '', filters: [{ name: f.label, extensions: [f.ext] }] });
+        if (!target) { status('Mixdown not exported.'); return null; }
+      }
       const m = await UI.busy('Rendering mixdown…', () => AS.renderMix(app.session, app.session.sr));
-      await encodeDownload(m.ch, m.sr, surround ? 'Mixdown 5.1' : 'Mixdown', r.fmt, r.dither);
-    } catch (e) { reportErr(e); }
+      if (!target) { await encodeDownload(m.ch, m.sr, base, r.fmt, r.dither); return true; }
+      const buf = await encodeBytes(m.ch, m.sr, r.fmt, r.dither);
+      await UI.busy('Writing ' + AS.disk.baseName(target) + '…', () => AS.disk.writeBytes(target, buf));
+      status('Mixdown exported: ' + target); return target;
+    } catch (e) { reportErr(e); return null; }
   }
   /* 5.1: the output device gets 6 channels when it has them; otherwise Web Audio folds 5.1 down to stereo (spec downmix) */
   function setOutChannels() {
@@ -1088,14 +1150,70 @@
     catch (e) { UI.toast(e.message, 'error'); }
   }
   /* .asession: versioned format + migration live in sessionio.js */
-  async function saveSession() {
-    await UI.busy('Saving session…', () => download(JSON.stringify(AS.sessionIO.serialize(app.session)), 'Session.asession', 'application/json'));
+  /* Save Multitrack Session (Ctrl+S in Multitrack): over the .asession it came from / was last saved to, else asks
+     where (Save Session As…). Format 4 = ZIP with the audio as separate WAVs, streamed to disk in pieces
+     (sessionzip.js) — no length limit. The session counts as saved only after the whole file was written. */
+  async function saveSession(as) {
+    const s = app.session, rev = s.undoStack.length + ':' + s.redoStack.length + ':' + (s.rev || 0);
+    const name = s.fileName || 'Session.asession';
+    if (!AS.disk.available) { // browser build: a download built from pieces (a Blob, never one giant string)
+      const parts = []; await UI.busy('Saving session…', async () => { await AS.sessionZip.write(s, { write: async (u) => { parts.push(u.slice()); } }); download(new Blob(parts), name, 'application/zip'); });
+      s.dirty = false; updateTitle(); return true;
+    }
+    let target = !as && s.filePath ? s.filePath : null;
+    if (!target) { target = await AS.disk.chooseSave({ title: 'Save Multitrack Session', name, path: s.filePath || s.suggestPath || '', filters: [{ name: 'AudioStage session', extensions: ['asession'] }] }); if (!target) { status('Session not saved.'); return false; } }
+    const need = AS.sessionZip.estimate(s), free = await AS.disk.freeSpace(AS.disk.dirOf(target));
+    if (free != null && free < need + 64 * 1024 * 1024) { UI.toast(`Not enough free disk space to save the session (${(need / 1048576).toFixed(0)} MB needed, ${(free / 1048576).toFixed(0)} MB free).`, 'error'); return false; }
+    const ctl = { aborted: false }, sink = AS.disk.sink(target);
+    try {
+      await UI.busy('Saving session…', async () => {
+        await AS.sessionZip.write(s, sink, { signal: ctl, onProgress: (a, n) => UI.busyMsg(`Saving session… ${Math.round((100 * a) / Math.max(1, n))} %`) });
+        await sink.commit();
+      }, () => { ctl.aborted = true; });
+    } catch (e) { await sink.abort(); if (e && e.cancelled) UI.toast('Saving cancelled — the file was not changed.'); else reportErr(e); return false; }
+    s.filePath = target; s.fileName = AS.disk.baseName(target);
+    if (rev === s.undoStack.length + ':' + s.redoStack.length + ':' + (s.rev || 0)) s.dirty = false;
+    AS.recent.note('sessions', target); updateTitle(); status('Session saved: ' + target);
+    return true;
   }
-  function useSession(s) { AS.welcome.hide(); if (eng.playing) stop(false); app.session = s; multi.s = s; multi.rebuildHeads(); setMode('multi'); multi.zoomAll(); AS.panels.refreshAll(); }
-  async function loadSession(file) {
-    try { useSession(AS.sessionIO.deserialize(JSON.parse(await file.text()))); AS.recent.note('sessions', file); }
-    catch (e) { UI.toast('Cannot open session: ' + e.message, 'error'); }
+  app.saveSession = saveSession;
+  function useSession(s) { AS.welcome.hide(); if (eng.playing) stop(false); app.session = s; multi.s = s; multi.rebuildHeads(); setMode('multi'); multi.zoomAll(); AS.panels.refreshAll(); updateTitle(); }
+  /* before the multitrack session is replaced (open another, New Session, recover): ask when it has unsaved changes.
+     → true = go ahead (saved, or the user chose not to) */
+  async function confirmSessionClose(what) {
+    const s = app.session; if (!s || !s.dirty || !s.tracks.some((t) => t.clips.length || t.fx.length) && !s.filePath) return true;
+    const r = await UI.dialog({ title: what || 'Unsaved session', html: `<p>The multitrack session${s.fileName ? ' “' + UI.esc(s.fileName) + '”' : ''} has unsaved changes.</p>`, okLabel: 'Save', cancelLabel: 'Cancel', extraButtons: [{ id: 'discard', label: 'Don’t Save' }] });
+    if (r === 'discard') return true;
+    if (!r) return false;
+    return saveSession(false);
   }
+  app.confirmSessionClose = confirmSessionClose;
+  /* file: a File (dropped / browser), or a file on disk read in pieces (AS.disk.lazyFile). Format 4 (ZIP) is read
+     piece by piece with progress and Cancel; formats 1–3 (one JSON text) still open. */
+  async function loadSession(file, o) {
+    if (!(o && o.noAsk) && !(await confirmSessionClose('Open Session'))) return false;
+    const ctl = { aborted: false };
+    try {
+      const src = file.lazy ? await AS.disk.source(file.asPath) : AS.disk.fileSource(file);
+      const s = await UI.busy('Opening session…', async () => {
+        const head = await src.read(0, Math.min(4, src.size));
+        if (AS.sessionZip.isZip(head)) return AS.sessionZip.read(src, { signal: ctl, onProgress: (a, n) => UI.busyMsg(`Opening session… ${Math.round((100 * a) / Math.max(1, n))} %`) });
+        return AS.sessionIO.deserialize(JSON.parse(new TextDecoder().decode(await AS.disk.readAll(src, { signal: ctl }))));
+      }, () => { ctl.aborted = true; });
+      const p = file.asPath || (window.audioStageRecent ? window.audioStageRecent.pathOf(file) : '') || '';
+      s.filePath = file.asPath || ''; s.fileName = file.name; s.dirty = false; if (!s.filePath && p) s.suggestPath = p; // (a dropped file: Save asks, starting there)
+      useSession(s); AS.recent.note('sessions', file);
+      return true;
+    } catch (e) { if (e && e.cancelled) UI.toast('Opening cancelled.'); else UI.toast('Cannot open session: ' + e.message, 'error'); return false; }
+  }
+  /* title bar: the file being worked on + "*" when it has unsaved changes */
+  let lastTitle = '';
+  function updateTitle() {
+    const s = app.session, d = app.cur, multiMode = app.mode === 'multi';
+    const name = multiMode ? (s ? (s.fileName || 'Untitled Session') + (s.dirty ? ' *' : '') : '') : d ? d.name + (d.dirty ? ' *' : '') : '';
+    const t = (name ? name + ' — ' : '') + 'AudioStage'; if (t !== lastTitle) { document.title = t; lastTitle = t; }
+  }
+  app.updateTitle = updateTitle;
 
   /* ================= Multitrack ops ================= */
   function insertDocIntoMulti(d) {
@@ -1662,8 +1780,8 @@
     if (!r) return; Object.assign(AUS, { on: r.on, minutes: r.minutes }); try { localStorage.setItem(AS_KEY, JSON.stringify(AUS)); } catch (e) { /* */ }
   }
   function useRecovered(r) {
-    for (const d0 of r.docs) { const d = addDoc(d0.name, d0.sr, d0.ch); d.sel = d0.sel || d.sel; d.markers = d0.markers || []; d.playlist = d0.playlist || []; d.tempo = d0.tempo || null; d.meta = d0.meta || null; d.dirty = true; }
-    if (r.session.tracks.some((t) => t.clips.length) || r.mode === 'multi') useSession(r.session);
+    for (const d0 of r.docs) { const d = addDoc(d0.name, d0.sr, d0.ch); d.sel = d0.sel || d.sel; d.markers = d0.markers || []; d.playlist = d0.playlist || []; d.tempo = d0.tempo || null; d.meta = d0.meta || null; d.dirty = true; if (d0.path) { d.path = d0.path; d.savable = false; } }
+    if (r.session.tracks.some((t) => t.clips.length) || r.mode === 'multi') { r.session.dirty = true; if (r.sessionFile) { r.session.fileName = r.sessionFile.name || ''; r.session.filePath = r.sessionFile.path || ''; } useSession(r.session); }
     updateFiles(); updateMarkers();
   }
   /* start-up: did the last run end normally? If not and there is an autosave, offer to recover it */
@@ -1671,7 +1789,7 @@
     const crashed = AU.boot(); let man = null;
     try { man = await AU.readAutosave(ST); } catch (e) { return; }
     if (!man) return;
-    if (!crashed) { AU.discard(ST).catch(() => {}); return; } // clean exit last time: the autosave is stale
+    if (!crashed) { AU.keepAsLast(ST).catch(() => {}); return; } // clean exit last time: kept for File > Recover Last Session…
     const when = new Date(man.time).toLocaleString(), files = (man.docs || []).map((d) => '<li>' + UI.esc(d.name) + '</li>').join('');
     const ok = await UI.dialog({ title: 'Recover unsaved work', okLabel: 'Recover', cancelLabel: 'Discard', width: 480,
       html: `<p>AudioStage did not close normally last time. Work autosaved at <b>${UI.esc(when)}</b> can be recovered:</p><ul>${man.clips ? `<li>Multitrack session: ${man.tracks} track(s), ${man.clips} clip(s)</li>` : ''}${files}</ul><div class="note">Discard deletes this autosave.</div>` });
@@ -1679,10 +1797,26 @@
     try { useRecovered(await UI.busy('Recovering…', () => AU.restore(ST, man))); status('Recovered the work autosaved at ' + when + '.'); } catch (e) { UI.toast('Recovery failed: ' + (e.message || e), 'error'); }
   }
   app.recoveryChecked = checkRecovery();
+  /* File > Recover Last Session…: the work autosaved before the last normal exit (also after "Close Without Saving") */
+  async function recoverLast() {
+    await app.recoveryChecked;
+    let man = null; try { man = await AU.readLast(ST); } catch (e) { /* none */ }
+    if (!man) { UI.toast('There is no autosaved work from the last session.'); return false; }
+    const when = new Date(man.time).toLocaleString(), files = (man.docs || []).map((d) => '<li>' + UI.esc(d.name) + '</li>').join('');
+    const ok = await UI.dialog({ title: 'Recover Last Session', okLabel: 'Recover', width: 480, html: `<p>Work autosaved at <b>${UI.esc(when)}</b>, before AudioStage was last closed:</p><ul>${man.clips ? `<li>Multitrack session${man.sessionFile && man.sessionFile.name ? ' “' + UI.esc(man.sessionFile.name) + '”' : ''}: ${man.tracks} track(s), ${man.clips} clip(s)</li>` : ''}${files}</ul><div class="note">Unsaved files open as new unsaved files; the multitrack session replaces the current one.</div>` });
+    if (!ok) return false;
+    if (man.clips && !(await confirmSessionClose('Recover Last Session'))) return false;
+    try { useRecovered(await UI.busy('Recovering…', () => AU.restore(ST, man))); status('Recovered the work autosaved at ' + when + '.'); return true; } catch (e) { UI.toast('Recovery failed: ' + (e.message || e), 'error'); return false; }
+  }
+  app.recoverLast = recoverLast;
   /* the Start screen, once crash recovery and files from Windows are settled */
   app.welcomeShown = Promise.all([app.recoveryChecked, shellOpened]).catch(() => {}).then(() => AS.welcome.startup(app));
   app.welcomeShown.then(() => AS.updates.startup()).catch(() => {}); // Preferences > General: check for updates when AudioStage opens
-  app.startNewSession = () => { if (eng.playing) stop(false); app.session = newSession(); multi.s = app.session; multi.rebuildHeads(); multi.resize(); setMode('multi'); };
+  app.startNewSession = () => {
+    const go = () => { if (eng.playing) stop(false); app.session = newSession(); multi.s = app.session; multi.rebuildHeads(); multi.resize(); setMode('multi'); updateTitle(); return true; };
+    if (app.hasUnsaved && app.session.dirty && (app.session.tracks.some((t) => t.clips.length) || app.session.filePath)) return confirmSessionClose('New Multitrack Session').then((ok) => ok && go());
+    return go();
+  };
   async function saveVersionDlg() {
     const r = await UI.dialog({ title: 'Save Project Version', okLabel: 'Save', fields: [{ id: 'name', label: 'Name', type: 'text', value: 'Version ' + new Date().toLocaleString() }, { id: 'n', type: 'note', label: 'A snapshot of the multitrack session you can go back to at any time (File > Versions…).' }] });
     if (!r) return;
@@ -1699,7 +1833,9 @@
           if (b.dataset.a === 'del') { await AU.deleteVersion(ST, id); b.closest('tr').remove(); status(`Version “${v.name}” deleted.`); return; }
           try {
             await AU.saveVersion(ST, 'Auto: before restoring “' + v.name + '”', app.session);
-            useSession(await UI.busy('Restoring…', () => AU.loadVersion(ST, id))); status(`Restored version “${v.name}”.`);
+            const cur = app.session, nv = await UI.busy('Restoring…', () => AU.loadVersion(ST, id));
+            nv.filePath = cur.filePath; nv.fileName = cur.fileName; nv.dirty = true; // still the same session file, now changed
+            useSession(nv); status(`Restored version “${v.name}”.`);
             el.closest('.modal-back').querySelector('[data-act="cancel"]').click();
           } catch (er) { reportErr(er); }
         });
@@ -1815,7 +1951,7 @@
     if (!F) { $(kind === 'sessions' ? '#sessionInput' : '#fileInput').click(); return; }
     const r = await F.open(kind, P.get('files.openDir'));
     if (!r.ok) { UI.toast(r.error, 'error'); return; }
-    const files = (r.files || []).map((x) => Object.assign(new File([x.data], x.name), { asPath: x.path }));
+    const files = (r.files || []).map((x) => AS.disk.lazyFile(AS.disk.fromInfo(x.path, x.name, x.size))); // read one at a time when opened
     if (kind === 'sessions') { if (files[0]) await loadSession(files[0]); } else if (files.length) await openFiles(files);
   }
 
@@ -1825,7 +1961,7 @@
     { label: 'File', items: [
       { label: 'New Audio File…', id: 'file.new', shortcut: 'Ctrl+N' }, { label: 'New Multitrack Session…', id: 'mt.new' }, '-',
       { label: 'Open…', id: 'file.open', shortcut: 'Ctrl+O' }, { label: 'Open Multitrack Session…', id: 'file.openSession' }, { label: 'Open Recent', items: () => AS.recent.menuItems('files') }, { label: 'Open Recent Session', items: () => AS.recent.menuItems('sessions') }, '-',
-      { label: 'Save As (WAV / MP3 / FLAC)…', id: 'file.save', shortcut: 'Ctrl+S' }, { label: 'Save Selection As…', id: 'file.saveSel' }, { label: 'File Info / Metadata…', id: 'file.info' }, { label: 'Save Multitrack Session…', id: 'file.saveSession' }, { label: 'Save Version…', id: 'file.saveVersion' }, { label: 'Versions…', id: 'file.versions' }, { label: 'Autosave…', id: 'file.autosave' }, { label: 'Export Multitrack Mixdown…', id: 'file.exportMix' }, { label: 'Export Video with Mixdown (ffmpeg)…', id: 'file.exportVideo' },
+      { label: 'Save', id: 'file.save', shortcut: 'Ctrl+S' }, { label: 'Save As (WAV / MP3 / FLAC)…', id: 'file.saveAs', shortcut: 'Ctrl+Shift+S' }, { label: 'Save Selection As…', id: 'file.saveSel' }, { label: 'File Info / Metadata…', id: 'file.info' }, { label: 'Save Multitrack Session', id: 'file.saveSession' }, { label: 'Save Multitrack Session As…', id: 'file.saveSessionAs' }, { label: 'Save Version…', id: 'file.saveVersion' }, { label: 'Versions…', id: 'file.versions' }, { label: 'Autosave…', id: 'file.autosave' }, { label: 'Recover Last Session…', id: 'file.recoverLast' }, { label: 'Export Multitrack Mixdown…', id: 'file.exportMix' }, { label: 'Export Video with Mixdown (ffmpeg)…', id: 'file.exportVideo' },
       { label: 'Export Session as FCP XML (Premiere / Resolve / Audition)…', id: 'file.exportFcp' }, { label: 'Import FCP XML Session…', id: 'file.importFcp' }, { label: 'CD Layout…', id: 'win:cd' }, { label: 'Batch Process…', id: 'file.batch' }, { label: 'Audio Hardware Setup…', id: 'file.audio' }, '-',
       { label: 'Close', id: 'file.close', shortcut: 'Ctrl+W' }, { label: 'Close All', id: 'file.closeall' }, '-', { label: 'Exit', id: 'file.exit' }] },
     { label: 'Edit', items: [
@@ -1967,7 +2103,9 @@
   });
   // keep Space/Enter from re-triggering a focused toolbar button
   for (const sel of ['#toolbar', '#transport']) $(sel).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) b.blur(); });
-  window.addEventListener('beforeunload', (e) => { if (AS.prefs.get('general.confirmClose') && app.docs.some((d) => d.dirty)) { e.preventDefault(); e.returnValue = ''; } });
+  // unsaved files or an unsaved multitrack session: ask before the window closes (main.js shows the question)
+  app.hasUnsaved = () => app.docs.some((d) => d.dirty) || !!(app.session && app.session.dirty && (app.session.tracks.some((t) => t.clips.length) || app.session.filePath));
+  window.addEventListener('beforeunload', (e) => { if (AS.prefs.get('general.confirmClose') && app.hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
 
   /* ================= Meters + animation ================= */
   const mc = $('#meters'), mg = mc.getContext('2d');
@@ -2008,6 +2146,7 @@
     if (app.mode === 'multi') tsec = app.multiPos(); else if (app.cur) tsec = app.playSample(app.cur) / app.cur.sr;
     if (app.recording) tsec = (performance.now() - app.recording.t0) / 1000 + app.recording.start;
     const str = fmtDisp(tsec); if (str !== lastTime) { $('#timeDisp').textContent = str; lastTime = str; }
+    updateTitle();
   }
 
   /* ================= Boot ================= */

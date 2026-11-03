@@ -33,11 +33,19 @@
   async function open(kind, i, on) {
     const ui = AS.ui, e = list(kind)[i]; if (!e) return false;
     if (!api) { ui.toast(`Browsers cannot reopen a file by themselves — choose “${e.name}” again.`); on.pick(kind); return false; }
-    const r = await api.read(e.path);
-    if (!r.ok) { ui.toast(`Cannot open “${e.name}”: ${r.error}`, 'error'); return false; }
-    if (r.missing) { await remove(kind, e); ui.toast(`“${e.name}” is no longer at ${e.path} — it was removed from the recent list.`, 'error'); return false; }
-    const file = new File([r.data], r.name || e.name);
-    await (kind === 'sessions' ? on.session(file) : on.file(file));
+    let file;
+    if (AS.disk && AS.disk.available) { // read in pieces when opened (sessions of any size)
+      let src = null; try { src = await AS.disk.source(e.path); } catch (er) { ui.toast(`Cannot open “${e.name}”: ${er.message}`, 'error'); return false; }
+      if (!src) { await remove(kind, e); ui.toast(`“${e.name}” is no longer at ${e.path} — it was removed from the recent list.`, 'error'); return false; }
+      file = AS.disk.lazyFile(src);
+    } else {
+      const r = await api.read(e.path);
+      if (!r.ok) { ui.toast(`Cannot open “${e.name}”: ${r.error}`, 'error'); return false; }
+      if (r.missing) { await remove(kind, e); ui.toast(`“${e.name}” is no longer at ${e.path} — it was removed from the recent list.`, 'error'); return false; }
+      file = Object.assign(new File([r.data], r.name || e.name), { asPath: e.path });
+    }
+    const opened = await (kind === 'sessions' ? on.session(file) : on.file(file));
+    if (opened === false) return false; // (cancelled)
     await note(kind, e.path); // to the top again
     return true;
   }

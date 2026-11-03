@@ -92,7 +92,7 @@
   }
 
   class Session {
-    constructor() { this.tracks = []; this.master = { vol: 0, fx: [] }; this.sr = 44100; this.settings = defaultSettings(); this.undoStack = []; this.redoStack = []; this.sel = null; this.nextClip = 1; this.addTrack(); this.addTrack(); this.undoStack = []; }
+    constructor() { this.tracks = []; this.master = { vol: 0, fx: [] }; this.sr = 44100; this.settings = defaultSettings(); this.undoStack = []; this.redoStack = []; this.sel = null; this.nextClip = 1; this.addTrack(); this.addTrack(); this.undoStack = []; this.dirty = false; this.filePath = ''; this.fileName = ''; }
     get opts() { return (this.settings = { ...defaultSettings(), ...(this.settings || {}) }); }
 
     /* ---- crossfades ----
@@ -214,9 +214,10 @@
       };
     }
     apply(s) { this.tracks = s.tracks; this.master = s.master; this.sel = s.sel; if (s.settings) this.settings = s.settings; }
-    push() { this.undoStack.push(this.snapshot()); if (this.undoStack.length > 60) this.undoStack.shift(); this.redoStack = []; }
-    undo() { const s = this.undoStack.pop(); if (!s) return false; this.redoStack.push(this.snapshot()); this.apply(s); return true; }
-    redo() { const s = this.redoStack.pop(); if (!s) return false; this.undoStack.push(this.snapshot()); this.apply(s); return true; }
+    /* every undoable change starts with push(), so it also marks the session as changed since the last save (dirty) */
+    push() { this.undoStack.push(this.snapshot()); if (this.undoStack.length > 60) this.undoStack.shift(); this.redoStack = []; this.dirty = true; this.rev = (this.rev || 0) + 1; }
+    undo() { const s = this.undoStack.pop(); if (!s) return false; this.redoStack.push(this.snapshot()); this.apply(s); this.dirty = true; this.rev = (this.rev || 0) + 1; return true; }
+    redo() { const s = this.redoStack.pop(); if (!s) return false; this.undoStack.push(this.snapshot()); this.apply(s); this.dirty = true; this.rev = (this.rev || 0) + 1; return true; }
     addTrack(name) {
       const n = this.tracks.length;
       const t = { id: Date.now() + '' + n + Math.random().toString(16).slice(2, 5), type: 'audio', name: name || 'Track ' + (n + 1), vol: AS.newTrackDefaults ? AS.newTrackDefaults().vol : 0, pan: 0, mute: false, solo: false, arm: false, color: COLORS[n % COLORS.length], clips: [], fx: [], auto: { vol: [], pan: [] }, out: 'master', sends: [] };

@@ -56,7 +56,7 @@
       }
     }
     const markers = cues.map((c) => ({ t: c.pos, name: labels[c.id] || 'Marker ' + c.id, ...(lengths[c.id] > 0 ? { d: lengths[c.id] } : {}) }));
-    return { sr, ch: out, markers, bext, cart, ...(fmt.mask ? { channelMask: fmt.mask } : {}) };
+    return { sr, ch: out, bits: fmt.bits, markers, bext, cart, ...(fmt.mask ? { channelMask: fmt.mask } : {}) };
   }
 
   /* extra chunks (cue points + labels, BWF bext) appended after the data chunk */

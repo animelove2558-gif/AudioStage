@@ -95,7 +95,19 @@ contextBridge.exposeInMainWorld('audioStageFiles', {
   pickFolder: (title, remember) => ipcRenderer.invoke('files:pickFolder', title, !!remember),
   open: (kind, dir) => ipcRenderer.invoke('files:open', kind, dir || ''),
   setSaveDir: (dir) => ipcRenderer.invoke('files:setSaveDir', dir || ''),
-  write: (dir, name, data) => ipcRenderer.invoke('files:write', dir, name, data),
+  write: (dir, name, data, o) => ipcRenderer.invoke('files:write', dir, name, data, o || {}),
+  exists: (dir, names) => ipcRenderer.invoke('files:exists', dir, names || []),
+  // Save / Save As: the dialog (main process) → a path; then a chunked write to a temporary file renamed when complete
+  chooseSave: (o) => ipcRenderer.invoke('files:chooseSave', o || {}),
+  begin: (p) => ipcRenderer.invoke('files:begin', p),
+  append: (id, data) => ipcRenderer.invoke('files:append', id, data),
+  commit: (id) => ipcRenderer.invoke('files:commit', id),
+  abort: (id) => ipcRenderer.invoke('files:abort', id),
+  // files the user opened, read in pieces
+  stat: (p) => ipcRenderer.invoke('files:stat', p),
+  read: (p, off, len) => ipcRenderer.invoke('files:read', p, off, len),
+  freeSpace: (dir) => ipcRenderer.invoke('files:freeSpace', dir || ''),
+  testSaveAnswer: (list) => ipcRenderer.invoke('test:saveAnswer', list), // app tests only (refused otherwise)
 });
 
 contextBridge.exposeInMainWorld('audioStageMedia', {
