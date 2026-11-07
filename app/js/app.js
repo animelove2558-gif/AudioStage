@@ -461,7 +461,7 @@
   }
   const actions = {
     'file.new': newFile, 'file.open': () => openDialog('files'), 'file.close': () => closeDoc(app.cur), 'file.closeall': async () => { for (const d of app.docs.slice()) await closeDoc(d); },
-    'file.save': () => (app.mode === 'multi' ? saveSession(false) : saveDoc('save')), 'file.saveAs': () => saveDoc('as'), 'file.saveSel': () => saveDoc('sel'), 'file.info': fileInfo, 'file.exportMix': exportMix, 'file.saveSession': () => saveSession(false), 'file.saveSessionAs': () => saveSession(true), 'file.recoverLast': recoverLast, 'file.openSession': () => openDialog('sessions'), 'file.exit': () => window.close(),
+    'file.save': () => (app.mode === 'multi' ? saveSession(false) : saveDoc('save')), 'file.saveAs': () => saveDoc('as'), 'file.saveSel': () => saveDoc('sel'), 'file.info': fileInfo, 'file.health': sessionHealth, 'file.exportMix': exportMix, 'file.saveSession': () => saveSession(false), 'file.saveSessionAs': () => saveSession(true), 'file.recoverLast': recoverLast, 'file.openSession': () => openDialog('sessions'), 'file.exit': () => window.close(),
     'edit.undo': () => { if (app.mode === 'multi') { if (app.session.undo()) { multi.rebuildHeads(); multi.resize(); AS.panels.refreshAll(); } return; } if (!needDoc()) return; if (eng.playing) stop(false); const l = app.cur.undo(); if (l) { status('Undo ' + l); wave.specCache = null; wave.draw(); updateInfo(); updateFiles(); } },
     'edit.redo': () => { if (app.mode === 'multi') { if (app.session.redo()) { multi.rebuildHeads(); multi.resize(); AS.panels.refreshAll(); } return; } if (!needDoc()) return; if (eng.playing) stop(false); const l = app.cur.redo(); if (l) { status('Redo ' + l); wave.specCache = null; wave.draw(); updateInfo(); updateFiles(); } },
     'edit.cut': () => { if (app.mode === 'multi') { if (app.session.sel) { app.clipClip = { ...app.session.findClip(app.session.sel).c }; deleteClip(); } return; } if (!needDoc() || !copyRange()) return; const d = app.cur; commit(d, D.spliceCh(d.ch, d.sel.a, d.sel.b, null), 'Cut', { a: d.sel.a, b: d.sel.a }); },
@@ -1143,6 +1143,15 @@
   app.saveDoc = saveDoc;
   /* File > File Info / Metadata…: title, artist, album, year, genre, track, comment and a cover image for the open file —
      written when it is saved (ID3v2.4 / Vorbis comments / MP4 atoms / WAV INFO; Title + Artist also go into BWF / CART) */
+  /* File > Session Audio Health…: what is wrong with the audio of the multitrack session, with a hint for each finding (health.js) */
+  async function sessionHealth() {
+    if (app.mode !== 'multi') { UI.toast('Switch to Multitrack first: this checks the session.'); return; }
+    const r = AS.health.check(app.session), lv = { error: 'Error', warn: 'Warning', info: 'Note' };
+    const rows = r.issues.map((i) => `<tr><td>${lv[i.level]}</td><td>${UI.esc(i.where)}</td><td>${UI.esc(i.msg)}<br><small>${UI.esc(i.fix)}</small></td></tr>`).join('');
+    const html = r.issues.length ? `<p>${r.errors} error(s), ${r.warnings} warning(s), ${r.infos} note(s).</p><div style="max-height:340px;overflow:auto"><table class="rk-tbl"><tr><th>Level</th><th>Where</th><th>What and how to fix it</th></tr>${rows}</table></div>` : '<p>No problems found in the audio of this session.</p>';
+    const a = await UI.dialog({ title: 'Session Audio Health', okLabel: 'Close', width: 720, html, extraButtons: r.issues.length ? [{ id: 'copy', label: 'Copy as JSON' }] : [] });
+    if (a === 'copy') { try { await navigator.clipboard.writeText(AS.health.json(app.session)); UI.toast('Copied.'); } catch (e) { UI.toast('Cannot copy: ' + e.message, 'error'); } }
+  }
   async function fileInfo() {
     if (!needDoc()) return; const d = app.cur, m = AS.tags.clean(d.meta); let cover = m.cover;
     const T = (id, label, tip) => ({ id, label, type: 'text', value: m[id], tip });
@@ -2057,7 +2066,7 @@
     { label: 'File', items: [
       { label: 'New Audio File…', id: 'file.new', shortcut: 'Ctrl+N' }, { label: 'New Multitrack Session…', id: 'mt.new' }, '-',
       { label: 'Open…', id: 'file.open', shortcut: 'Ctrl+O' }, { label: 'Open Multitrack Session…', id: 'file.openSession' }, { label: 'Open Recent', items: () => AS.recent.menuItems('files') }, { label: 'Open Recent Session', items: () => AS.recent.menuItems('sessions') }, '-',
-      { label: 'Save', id: 'file.save', shortcut: 'Ctrl+S' }, { label: 'Save As (WAV / MP3 / FLAC)…', id: 'file.saveAs', shortcut: 'Ctrl+Shift+S' }, { label: 'Save Selection As…', id: 'file.saveSel' }, { label: 'File Info / Metadata…', id: 'file.info' }, { label: 'Save Multitrack Session', id: 'file.saveSession' }, { label: 'Save Multitrack Session As…', id: 'file.saveSessionAs' }, { label: 'Save Version…', id: 'file.saveVersion' }, { label: 'Versions…', id: 'file.versions' }, { label: 'Autosave…', id: 'file.autosave' }, { label: 'Recover Last Session…', id: 'file.recoverLast' }, { label: 'Export Multitrack Mixdown…', id: 'file.exportMix' }, { label: 'Export Video with Mixdown (ffmpeg)…', id: 'file.exportVideo' },
+      { label: 'Save', id: 'file.save', shortcut: 'Ctrl+S' }, { label: 'Save As (WAV / MP3 / FLAC)…', id: 'file.saveAs', shortcut: 'Ctrl+Shift+S' }, { label: 'Save Selection As…', id: 'file.saveSel' }, { label: 'File Info / Metadata…', id: 'file.info' }, { label: 'Session Audio Health…', id: 'file.health' }, { label: 'Save Multitrack Session', id: 'file.saveSession' }, { label: 'Save Multitrack Session As…', id: 'file.saveSessionAs' }, { label: 'Save Version…', id: 'file.saveVersion' }, { label: 'Versions…', id: 'file.versions' }, { label: 'Autosave…', id: 'file.autosave' }, { label: 'Recover Last Session…', id: 'file.recoverLast' }, { label: 'Export Multitrack Mixdown…', id: 'file.exportMix' }, { label: 'Export Video with Mixdown (ffmpeg)…', id: 'file.exportVideo' },
       { label: 'Export Session as FCP XML (Premiere / Resolve / Audition)…', id: 'file.exportFcp' }, { label: 'Import FCP XML Session…', id: 'file.importFcp' }, { label: 'CD Layout…', id: 'win:cd' }, { label: 'Batch Process…', id: 'file.batch' }, { label: 'Audio Hardware Setup…', id: 'file.audio' }, '-',
       { label: 'Close', id: 'file.close', shortcut: 'Ctrl+W' }, { label: 'Close All', id: 'file.closeall' }, '-', { label: 'Exit', id: 'file.exit' }] },
     { label: 'Edit', items: [
