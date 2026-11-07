@@ -461,7 +461,7 @@
   }
   const actions = {
     'file.new': newFile, 'file.open': () => openDialog('files'), 'file.close': () => closeDoc(app.cur), 'file.closeall': async () => { for (const d of app.docs.slice()) await closeDoc(d); },
-    'file.save': () => (app.mode === 'multi' ? saveSession(false) : saveDoc('save')), 'file.saveAs': () => saveDoc('as'), 'file.saveSel': () => saveDoc('sel'), 'file.info': fileInfo, 'file.health': sessionHealth, 'file.exportMix': exportMix, 'file.saveSession': () => saveSession(false), 'file.saveSessionAs': () => saveSession(true), 'file.recoverLast': recoverLast, 'file.openSession': () => openDialog('sessions'), 'file.exit': () => window.close(),
+    'file.save': () => (app.mode === 'multi' ? saveSession(false) : saveDoc('save')), 'file.saveAs': () => saveDoc('as'), 'file.saveSel': () => saveDoc('sel'), 'file.info': fileInfo, 'file.stems': exportStems, 'file.health': sessionHealth, 'file.exportMix': exportMix, 'file.saveSession': () => saveSession(false), 'file.saveSessionAs': () => saveSession(true), 'file.recoverLast': recoverLast, 'file.openSession': () => openDialog('sessions'), 'file.exit': () => window.close(),
     'edit.undo': () => { if (app.mode === 'multi') { if (app.session.undo()) { multi.rebuildHeads(); multi.resize(); AS.panels.refreshAll(); } return; } if (!needDoc()) return; if (eng.playing) stop(false); const l = app.cur.undo(); if (l) { status('Undo ' + l); wave.specCache = null; wave.draw(); updateInfo(); updateFiles(); } },
     'edit.redo': () => { if (app.mode === 'multi') { if (app.session.redo()) { multi.rebuildHeads(); multi.resize(); AS.panels.refreshAll(); } return; } if (!needDoc()) return; if (eng.playing) stop(false); const l = app.cur.redo(); if (l) { status('Redo ' + l); wave.specCache = null; wave.draw(); updateInfo(); updateFiles(); } },
     'edit.cut': () => { if (app.mode === 'multi') { if (app.session.sel) { app.clipClip = { ...app.session.findClip(app.session.sel).c }; deleteClip(); } return; } if (!needDoc() || !copyRange()) return; const d = app.cur; commit(d, D.spliceCh(d.ch, d.sel.a, d.sel.b, null), 'Cut', { a: d.sel.a, b: d.sel.a }); },
@@ -642,7 +642,7 @@
   app.playlistEdit = (label, fn) => { const d = app.cur; if (!d) return; d.setMeta(label, (x) => { x.playlist = x.playlist || []; fn(x.playlist, x); }); const p = AS.panels.defs.playlist; if (p && p.refresh) p.refresh(); };
   /* Export Ranges: every range marker (or the chosen ones) as its own file. o: {fmt, template, ids, dir} (dir: desktop
      folder, chosen with a dialog when missing). Names: {file} {marker} {n} in the template. */
-  const safeName = (s) => String(s).replace(/[\\/:*?"<>|\x00-\x1f]+/g, '_').replace(/^\.+/, '').trim().slice(0, 150) || 'untitled';
+  const safeName = (s) => { const n = String(s).replace(/[\\/:*?"<>|\x00-\x1f]+/g, '_').replace(/^\.+/, '').trim().slice(0, 150).replace(/[ .]+$/, '') || 'untitled'; return /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(n.split('.')[0]) ? '_' + n : n; }; // (Windows device names and a trailing dot are not file names)
   /* before writing several files into a folder: some names exist already → ask. → { overwrite } | null (cancel).
      linked = the files refer to each other by name (CUE + WAV, XML + media): only Replace or Cancel */
   async function askOverwrite(dir, names, linked) {
@@ -1152,6 +1152,28 @@
     const a = await UI.dialog({ title: 'Session Audio Health', okLabel: 'Close', width: 720, html, extraButtons: r.issues.length ? [{ id: 'copy', label: 'Copy as JSON' }] : [] });
     if (a === 'copy') { try { await navigator.clipboard.writeText(AS.health.json(app.session)); UI.toast('Copied.'); } catch (e) { UI.toast('Cannot copy: ' + e.message, 'error'); } }
   }
+  /* File > Export Stems…: every audio track on its own (solo: its sends and buses sound with it), the whole session length,
+     one file per track in a folder, so the stems line up when they are put back together */
+  async function exportStems(o) {
+    if (app.mode !== 'multi') { UI.toast('Switch to Multitrack first.'); return null; }
+    const s = app.session, tracks = s.tracks.filter((t) => t.type !== 'bus' && t.clips.length), total = s.duration;
+    if (!tracks.length || total <= 0) { UI.toast('There are no tracks with clips to export.'); return null; }
+    let fmt = (o && o.fmt) || null;
+    if (!fmt) { const r = await UI.dialog({ title: 'Export Stems', okLabel: 'Export', fields: [{ id: 'fmt', label: 'Format', type: 'select', options: fmtOptions(), value: defaultFmt(24) }], note: `${tracks.length} track(s), each as its own file over the whole session length.` }); if (!r) return null; fmt = r.fmt; }
+    const sr = s.sr || 48000, base = safeName((s.fileName || 'Session').replace(/.w+$/, '')), used = new Set(), out = [], solo = s.tracks.map((t) => t.solo), ext = FORMATS[fmt].ext;
+    try {
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i]; let name = safeName(`${base} - ${String(i + 1).padStart(2, '0')} ${t.name}`) + '.' + ext, k = 2; while (used.has(name.toLowerCase())) name = safeName(`${base} - ${String(i + 1).padStart(2, '0')} ${t.name}`) + ` (${k++}).` + ext; used.add(name.toLowerCase());
+        for (const x of s.tracks) x.solo = x === t;
+        const m = await UI.busy(`Rendering stem ${i + 1}/${tracks.length}: ${t.name}…`, () => AS.renderRange(s, sr, 0, total, null, 0));
+        out.push({ name, data: await encodeBytes(m.ch, sr, fmt, true, `Encoding stem ${i + 1}/${tracks.length}…`), mime: FORMATS[fmt].mime });
+      }
+    } finally { s.tracks.forEach((x, i) => { x.solo = solo[i]; }); }
+    const r = await saveFiles(out, { dir: o && o.dir, title: 'Export stems to folder' });
+    if (r) status(`Exported ${out.length} stem(s)${r.dir ? ' to ' + r.dir : ''}.`);
+    return r;
+  }
+  app.exportStems = exportStems;
   async function fileInfo() {
     if (!needDoc()) return; const d = app.cur, m = AS.tags.clean(d.meta); let cover = m.cover;
     const T = (id, label, tip) => ({ id, label, type: 'text', value: m[id], tip });
@@ -2066,7 +2088,7 @@
     { label: 'File', items: [
       { label: 'New Audio File…', id: 'file.new', shortcut: 'Ctrl+N' }, { label: 'New Multitrack Session…', id: 'mt.new' }, '-',
       { label: 'Open…', id: 'file.open', shortcut: 'Ctrl+O' }, { label: 'Open Multitrack Session…', id: 'file.openSession' }, { label: 'Open Recent', items: () => AS.recent.menuItems('files') }, { label: 'Open Recent Session', items: () => AS.recent.menuItems('sessions') }, '-',
-      { label: 'Save', id: 'file.save', shortcut: 'Ctrl+S' }, { label: 'Save As (WAV / MP3 / FLAC)…', id: 'file.saveAs', shortcut: 'Ctrl+Shift+S' }, { label: 'Save Selection As…', id: 'file.saveSel' }, { label: 'File Info / Metadata…', id: 'file.info' }, { label: 'Session Audio Health…', id: 'file.health' }, { label: 'Save Multitrack Session', id: 'file.saveSession' }, { label: 'Save Multitrack Session As…', id: 'file.saveSessionAs' }, { label: 'Save Version…', id: 'file.saveVersion' }, { label: 'Versions…', id: 'file.versions' }, { label: 'Autosave…', id: 'file.autosave' }, { label: 'Recover Last Session…', id: 'file.recoverLast' }, { label: 'Export Multitrack Mixdown…', id: 'file.exportMix' }, { label: 'Export Video with Mixdown (ffmpeg)…', id: 'file.exportVideo' },
+      { label: 'Save', id: 'file.save', shortcut: 'Ctrl+S' }, { label: 'Save As (WAV / MP3 / FLAC)…', id: 'file.saveAs', shortcut: 'Ctrl+Shift+S' }, { label: 'Save Selection As…', id: 'file.saveSel' }, { label: 'File Info / Metadata…', id: 'file.info' }, { label: 'Session Audio Health…', id: 'file.health' }, { label: 'Save Multitrack Session', id: 'file.saveSession' }, { label: 'Save Multitrack Session As…', id: 'file.saveSessionAs' }, { label: 'Save Version…', id: 'file.saveVersion' }, { label: 'Versions…', id: 'file.versions' }, { label: 'Autosave…', id: 'file.autosave' }, { label: 'Recover Last Session…', id: 'file.recoverLast' }, { label: 'Export Multitrack Mixdown…', id: 'file.exportMix' }, { label: 'Export Stems (one file per track)…', id: 'file.stems' }, { label: 'Export Video with Mixdown (ffmpeg)…', id: 'file.exportVideo' },
       { label: 'Export Session as FCP XML (Premiere / Resolve / Audition)…', id: 'file.exportFcp' }, { label: 'Import FCP XML Session…', id: 'file.importFcp' }, { label: 'CD Layout…', id: 'win:cd' }, { label: 'Batch Process…', id: 'file.batch' }, { label: 'Audio Hardware Setup…', id: 'file.audio' }, '-',
       { label: 'Close', id: 'file.close', shortcut: 'Ctrl+W' }, { label: 'Close All', id: 'file.closeall' }, '-', { label: 'Exit', id: 'file.exit' }] },
     { label: 'Edit', items: [
