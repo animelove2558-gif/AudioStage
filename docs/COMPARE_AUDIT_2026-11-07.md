@@ -333,3 +333,36 @@ Open `[ ]` items in `ROADMAP-AUDITION-PLUS.md`: Whisper transcription and text-b
 | All | 30 | 16 | 46 |
 
 Not verified (no running app, no Linux/macOS machine, no tester logs): real memory thresholds of C-06, C-07, C-15 and C-23; Chromium behaviour after an output device is unplugged (C-08); the Windows Store `python.exe` stub behaviour (C-12); Thai/Unicode path handling in the packaged build together with the Python helper (no defect found by reading, not run); packaged (asar/unpacked) behaviour of the VST helper beyond the path rewrite at `electron/vst-host.js:6` (read as correct); Multitrack session undo size; whether the `app.test.js` failure (C-10) is flaky.
+
+---
+
+## Implementation status, T1 (2026-11-07, Claude Sonnet 5.5 agent)
+
+Done = committed and run. Tests: `node tests/crash.test.js` (real Electron, crash handlers fired for real), the Node suites named below, the app scenarios 73-75, and a full `npm test`.
+
+- [x] C-01 renderer death: dialog Reload/Quit, logged reason + exit code, reload (limited to 3 per minute), `unresponsive`/`did-fail-load` logged. `main.js`; crash.test.js (window crashed with `forcefullyCrashRenderer`, reloaded, works again).
+- [x] C-02 vst-host EPIPE: `stdin` error handler, writable check, request rejected. tests/guards.test.js (dead helper, no uncaught error).
+- [x] C-03 uncaught exception: one non-blocking dialog per 30 s, restart offered after 3, rest logged and counted. crash.test.js (40 errors -> 1 dialog).
+- [x] C-04 `tick()` is guarded; `error` / `unhandledrejection` reported once (log + toast) and counted (`app/js/errors.js`, tests/errors.test.js).
+- [x] C-11 session validation (`sanitize` in sessionio.js, notice when clips were removed); tests/sessionfuzz.test.js (500 field mutations, 300 ZIP byte flips/truncations: all refused cleanly or usable).
+- [~] C-12 partly: negative Python detection cached 60 s, plugin folder scan bounded (20000 entries / 5 s), video probe async. The async Python detection was added by the T2 agent. Not done: `vst:scan` itself is still synchronous inside its bounds.
+- [x] C-13 drive letters probed in parallel with a 1.5 s limit; folder listing async, capped at 20000 entries.
+- [x] C-16 recorder Stop returns after 3 s at most (also on `onprocessorerror` / non-running context); a failed worklet gives a clear error. Covered by the recording scenario in the full run (the device-loss path itself was not triggered).
+- [x] C-18 log: rotation at every start (3 runs), repeats counted, 16 MiB cap, `running.lock` marker (`previousRunEndedBadly`); tests/help.test.js, crash.test.js.
+- [x] C-19 second launch exits before logs/windows (`process.exit(0)` right after the lock); crash.test.js.
+- [x] C-20 start-up sweep of old `store/**/*.tmp` and dead `audiostage-vst-<pid>-*` folders (tests/sweep.test.js; hooked 3 s after start).
+- [x] C-22 one undo budget shared by all open files (tests/saving.test.js).
+- [x] C-24 reserved Windows names / trailing dot or space refused in `main.js` and in the renderer helper (tests/guards.test.js).
+- [x] C-25 unsupported sample rate (outside 3000-768000 Hz) or channel count (above 32) refused on open with a message.
+- [x] C-26 ffmpeg export: 30 min timeout, `video:abort` wired to the busy overlay's Cancel; temp WAV and `.partial` removed. Not tested: the timeout/cancel path against a stuck ffmpeg.
+- [x] C-27 `server.js`: bad URL gives 400, sibling folder check, port-in-use message (run against the real server).
+- [x] C-29 ffmpeg pinned to `autobuild-2026-11-05-12-48` + SHA-256 taken from that release's `checksums.sha256`. The 76 MB file itself was NOT downloaded and re-hashed here.
+- [x] C-30 `folders.json`, `recent.json`, `vst-scan.json` written with the atomic writer.
+- [ ] C-05 left to the T2 agent (file-read handlers).
+- [x] G-05 File > Session Audio Health (`health.js`, JSON copy); tests/health.test.js, scenario 73.
+- [~] G-09 added Insert Silence and Repeat Selection (scenario 75). Not done: consolidate, heal, separate on grid, shift, Spot/Shuffle/Slip modes.
+- [~] G-10 AIFF export/import 16/24-bit (tests/aiff.test.js), Export Stems (scenario 74), RF64 above 4 GB already existed in `wav.js stream` (tests/rf64.test.js). Not done: CAF, AIFF 32-bit in the format list.
+- [x] G-13 `tools/audiostage-cli.js` (`npm run cli`): convert / normalize / batch for WAV and AIFF in, WAV / AIFF / FLAC out, exit codes 0/1/2, `--json`; tests/cli.test.js. MP3/M4A input needs the app.
+- [x] G-15 `build.mac` (dmg + zip, x64/arm64) in package.json. Config only: no Mac was available, nothing built or signed.
+- [~] G-16 timecode at 23.976 / 24 / 25 / 29.97 (DF and NDF) / 30 / 50 / 59.94 (DF and NDF) / 60 and Feet+Frames, rate in Preferences > Display (tests/timecode.test.js). Not done: numbered memory locations, Big Counter window.
+- [ ] G-14 Thai UI: left, it is T2 (a string table across the whole UI).
