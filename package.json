@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "web": "node server.js",
+    "cli": "node tools/audiostage-cli.js",
     "test": "node tests/run-all.js",
     "setup:vst": "node tools/vst/setup.js",
     "test:vst": "node tests/vst_host.test.js",
