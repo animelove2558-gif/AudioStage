@@ -11,7 +11,7 @@ class RecentStore {
     const out = {}; for (const k of KINDS) out[k] = (Array.isArray(j[k]) ? j[k] : []).filter((e) => e && typeof e.path === 'string').slice(0, this.max);
     return out;
   }
-  save(l) { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file + '.tmp', JSON.stringify(l, null, 1)); fs.renameSync(this.file + '.tmp', this.file); return l; }
+  save(l) { require('./savefile').writeFileAtomic(this.file, JSON.stringify(l, null, 1)); return l; }
   kind(k) { if (!KINDS.includes(k)) throw new Error('Unknown recent list.'); return k; }
   /* to the top (moved there if it was in the list already) */
   add(k, p) {

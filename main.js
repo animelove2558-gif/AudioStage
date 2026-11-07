@@ -9,14 +9,30 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // `npm run test:app` starts the real app hidden, with its own userData folder, and runs tests/app/*.scenario.js in it
 const SELFTEST = process.env.AUDIOSTAGE_SELFTEST || '';
 if (SELFTEST) app.setPath('userData', SELFTEST);
+// a second start hands its arguments to the first one (second-instance event below) and ends here, before it creates
+// a log, a plugin host or a window that would touch the same files as the running instance
+if (!app.requestSingleInstanceLock()) process.exit(0);
 
 /* ---- Log files (Help > Show Log Files / Report a Problem): <userData>/logs ---- */
 const { Log, systemInfo } = require('./electron/logs');
 const log = new Log(path.join(app.getPath('userData'), 'logs'));
 log.write('info', `AudioStage ${app.getVersion()} started (Electron ${process.versions.electron}, ${process.platform} ${process.arch}${app.isPackaged ? '' : ', development'})`);
-process.on('uncaughtException', (e) => { log.write('error', e); if (!SELFTEST) dialog.showErrorBox('AudioStage', 'An unexpected error happened: ' + e.message + '\n\nDetails are in the log file (Help > Show Log Files).'); });
+/* An uncaught error in the main process is logged every time, but the user sees at most one dialog per 30 s (it does not
+   block: showMessageBox, not showErrorBox), and after three of them it offers a restart. The app tests count the dialogs. */
+const { DialogThrottle, ReloadLimiter } = require('./electron/guards');
+const errThrottle = new DialogThrottle({ intervalMs: 30000, restartAfter: 3 });
+let errDialogs = 0;
+process.on('uncaughtException', (e) => {
+  log.write('error', e);
+  const t = errThrottle.hit();
+  if (!t.show) return;
+  if (SELFTEST) { errDialogs++; return; }
+  const more = t.suppressed ? `\n\n(${t.suppressed} more error${t.suppressed === 1 ? '' : 's'} since the last message.)` : '';
+  dialog.showMessageBox({ type: 'error', title: 'AudioStage', buttons: t.offerRestart ? ['OK', 'Restart AudioStage'] : ['OK'], defaultId: 0, cancelId: 0, message: 'An unexpected error happened: ' + (e && e.message || e), detail: 'Details are in the log file (Help > Show Log Files).' + (t.offerRestart ? '\nThis keeps happening; restarting AudioStage is recommended (unsaved work is autosaved and can be recovered).' : '') + more })
+    .then((r) => { if (r.response === 1) { log.close(); app.relaunch(); app.exit(0); } }).catch(() => {});
+});
 process.on('unhandledRejection', (e) => log.write('error', e));
-app.on('child-process-gone', (e, d) => log.write('warn', `${d.type} process gone: ${d.reason} (exit ${d.exitCode})`));
+app.on('child-process-gone', (e, d) => log.write(d.reason === 'clean-exit' ? 'info' : 'error', `${d.type} process gone: ${d.reason} (exit ${d.exitCode})${d.name ? ' ' + d.name : ''}`));
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('log:info', () => ({ ok: true, info: systemInfo({ version: app.getVersion(), packaged: app.isPackaged }), dir: log.dir, tail: log.tail(40) }));
 ipcMain.handle('log:show', wrapLater((e) => { fs.mkdirSync(log.dir, { recursive: true }); return SELFTEST ? { dir: log.dir } : shell.openPath(log.dir).then((err) => { if (err) throw new Error(err); return { dir: log.dir }; }); }));
@@ -118,10 +134,25 @@ ipcMain.handle('media:list', wrap((e, dir) => {
   const parent = path.dirname(d);
   return { dir: d, parent: parent !== d ? parent : '', entries: out };
 }));
+/* Whole-file reads stop at WHOLE_MAX: larger files go through files:stat / files:read in pieces (app/js/disk.js), so the main
+   process never holds a large file. No new Uint8Array(buffer) either: that was a second full copy. */
+const WHOLE_MAX = 64 * 1024 * 1024;
+function readWhole(p) {
+  const b = fs.readFileSync(p); // (the size was checked by the caller)
+  return new Uint8Array(b.buffer, b.byteOffset, b.length);
+}
+const tooBigWhole = (size) => { if (size > WHOLE_MAX) throw new Error('This file is too large to read in one piece.'); };
+/* a Media Browser file: allow-listed extension → may be read in pieces (files:read) */
+ipcMain.handle('media:open', wrap((e, p) => {
+  if (typeof p !== 'string' || !path.isAbsolute(p) || !MEDIA_EXT.test(p)) throw new Error('Only audio and video files can be opened.');
+  const st = fs.statSync(p); if (!st.isFile()) throw new Error('Not a file.'); if (st.size > MAX_OPEN) throw new Error('File is too large.');
+  readable.add(pkey(p));
+  return { path: p, name: path.basename(p), size: st.size };
+}));
 ipcMain.handle('media:read', wrap((e, p) => {
   if (typeof p !== 'string' || !MEDIA_EXT.test(p)) throw new Error('Only audio and video files can be opened.');
-  const st = fs.statSync(p); if (!st.isFile()) throw new Error('Not a file.'); if (st.size > 1.5 * 1024 * 1024 * 1024) throw new Error('File is too large.');
-  return { data: new Uint8Array(fs.readFileSync(p)) };
+  const st = fs.statSync(p); if (!st.isFile()) throw new Error('Not a file.'); tooBigWhole(st.size);
+  return { data: readWhole(p) };
 }));
 
 /* ---- File > Open Recent / Open Recent Session (userData/recent.json) + the Windows Jump List ----
@@ -139,8 +170,8 @@ ipcMain.handle('recent:clear', wrap((e, k) => { const lists = recent.clear(k); i
 ipcMain.handle('recent:read', wrap((e, p) => {
   if (typeof p !== 'string' || !recent.has(p)) throw new Error('Not a recent file.');
   if (!fs.existsSync(p)) return { missing: true };
-  const st = fs.statSync(p); if (!st.isFile()) return { missing: true }; if (st.size > 1.5 * 1024 * 1024 * 1024) throw new Error('File is too large.');
-  return { data: new Uint8Array(fs.readFileSync(p)), name: path.basename(p) };
+  const st = fs.statSync(p); if (!st.isFile()) return { missing: true }; tooBigWhole(st.size);
+  return { data: readWhole(p), name: path.basename(p) };
 }));
 
 /* ---- Effects > Generate > Speech…: the voices Windows has (offline). The app tests use a fake engine (AUDIOSTAGE_TTS_MOCK). ---- */
@@ -193,7 +224,7 @@ ipcMain.handle('files:pickFolder', wrap(async (e, title, remember) => {
   const r = await dialog.showOpenDialog(win, { title: typeof title === 'string' ? title : 'Choose a folder', properties: ['openDirectory', 'createDirectory'] });
   if (r.canceled || !r.filePaths[0]) return { dir: null };
   const d = path.resolve(r.filePaths[0]); outDirs.add(d);
-  if (remember) { let kept = []; try { kept = JSON.parse(fs.readFileSync(keptDirsFile, 'utf8')); } catch (er) { /* */ } fs.writeFileSync(keptDirsFile, JSON.stringify([...new Set([...kept, d])].slice(-50))); }
+  if (remember) { let kept = []; try { kept = JSON.parse(fs.readFileSync(keptDirsFile, 'utf8')); } catch (er) { /* */ } writeFileAtomic(keptDirsFile, JSON.stringify([...new Set([...kept, d])].slice(-50))); }
   return { dir: d };
 }));
 /* File > Open… / Open Multitrack Session…: the system dialog, starting in Preferences > Files > Open files from */
@@ -209,7 +240,7 @@ ipcMain.handle('files:open', wrap(async (e, kind, dir) => {
 /* the folder the Save dialog (Save As, Export…) starts in: Preferences > Files */
 let saveDir = '';
 ipcMain.handle('files:setSaveDir', wrap((e, d) => { saveDir = typeof d === 'string' ? d : ''; return {}; }));
-const okName = (name) => typeof name === 'string' && /^[^\\/:*?"<>|\x00-\x1f]{1,180}$/.test(name) && name !== '.' && name !== '..';
+const { okName, safeName } = require('./electron/filenames'); // (no Windows device names, no trailing dot / space)
 /* write one file into a chosen folder. An existing file of that name is kept: the new one gets " (2)" etc., unless
    o.overwrite (the renderer asked the user first, see files:exists) */
 ipcMain.handle('files:write', wrap((e, dir, name, data, o) => {
@@ -244,7 +275,7 @@ let testSaveAnswers = []; // app tests: what the Save dialog "answers" (a path, 
 if (SELFTEST) ipcMain.handle('test:saveAnswer', (e, list) => { testSaveAnswers = Array.isArray(list) ? list.slice() : []; return true; });
 ipcMain.handle('files:chooseSave', wrap(async (e, o) => {
   const oo = o && typeof o === 'object' ? o : {};
-  const name = (typeof oo.name === 'string' && oo.name ? oo.name : 'Untitled').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 180);
+  const name = safeName(typeof oo.name === 'string' ? oo.name : '');
   const startDir = saveDir && fs.existsSync(saveDir) ? saveDir : app.getPath('documents');
   const def = typeof oo.path === 'string' && path.isAbsolute(oo.path) && fs.existsSync(path.dirname(oo.path)) ? oo.path : path.join(startDir, name);
   const filters = (Array.isArray(oo.filters) ? oo.filters : []).filter((f) => f && typeof f.name === 'string' && Array.isArray(f.extensions)).map((f) => ({ name: f.name.slice(0, 80), extensions: f.extensions.filter((x) => typeof x === 'string' && /^[\w*]{1,12}$/.test(x)) }));
@@ -336,15 +367,14 @@ ipcMain.handle('open:pending', () => { const p = pendingOpen; pendingOpen = []; 
 ipcMain.handle('open:read', wrap((e, p) => {
   if (typeof p !== 'string' || !shellFiles.has(p)) throw new Error('Not a file given to AudioStage.');
   if (!fs.existsSync(p)) return { missing: true };
-  if (fs.statSync(p).size > 1.5 * 1024 * 1024 * 1024) throw new Error('File is too large.');
-  return { data: new Uint8Array(fs.readFileSync(p)), name: path.basename(p) };
+  tooBigWhole(fs.statSync(p).size);
+  return { data: readWhole(p), name: path.basename(p) };
 }));
 // (app tests only) the same path as a second start of AudioStage with these arguments
 if (SELFTEST) ipcMain.handle('test:secondInstance', (e, argv, cwd) => { onSecondInstance(argv, cwd); return true; });
-if (!app.requestSingleInstanceLock()) app.quit();
-else app.on('second-instance', (_e, argv, cwd) => onSecondInstance(argv, cwd));
+app.on('second-instance', (_e, argv, cwd) => onSecondInstance(argv, cwd));
 ipcMain.handle('extedit:pending', () => { const p = pendingExt.map((x) => ({ path: x, name: path.basename(x) })); pendingExt = []; return p; });
-ipcMain.handle('extedit:read', wrap((e, p) => { if (!extFiles.has(p)) throw new Error('Not an external-edit file.'); return { data: new Uint8Array(fs.readFileSync(p)) }; }));
+ipcMain.handle('extedit:read', wrap((e, p) => { if (!extFiles.has(p)) throw new Error('Not an external-edit file.'); tooBigWhole(fs.statSync(p).size); return { data: readWhole(p) }; }));
 ipcMain.handle('extedit:save', wrap((e, p, data) => {
   if (!extFiles.has(p)) throw new Error('Not an external-edit file.');
   if (!(data instanceof Uint8Array) && !(data instanceof ArrayBuffer)) throw new Error('Bad data.');
@@ -354,6 +384,10 @@ ipcMain.handle('extedit:save', wrap((e, p, data) => {
 const DEVTOOLS = !app.isPackaged || process.env.AUDIOSTAGE_DEVTOOLS === '1';
 const APP_PAGE = require('url').pathToFileURL(path.join(__dirname, 'app', 'index.html')).href;
 const isAppPage = (url) => { try { const u = new URL(url); u.hash = ''; u.search = ''; return u.href.toLowerCase() === APP_PAGE.toLowerCase(); } catch (e) { return false; } };
+const reloads = new ReloadLimiter({ max: 3, windowMs: 60000 });
+let rendererReloads = 0, unresponsiveBox = false;
+// (app tests only) tests/crash-driver.js reads these counters after making the crash handlers run for real
+if (SELFTEST) global.AUDIOSTAGE_TEST = { stats: () => ({ errDialogs, rendererReloads }) };
 function createWindow() {
   win = new BrowserWindow({
     width: 1500, height: 900, minWidth: 900, minHeight: 600, backgroundColor: '#1b1d21', title: 'AudioStage', show: !SELFTEST,
@@ -378,9 +412,28 @@ function createWindow() {
     if (choice === 0) e.preventDefault(); // preventDefault here = ignore the page's objection and close
   });
   win.webContents.on('console-message', (...a) => { const d = a[1] && typeof a[1] === 'object' ? a[1] : { level: a[1], message: a[2], sourceId: a[4], lineNumber: a[3] }; const lv = typeof d.level === 'string' ? d.level : ['verbose', 'info', 'warning', 'error'][d.level]; if (lv === 'error' || lv === 'warning') log.write(lv === 'error' ? 'error' : 'warn', `${d.message} (${path.basename(String(d.sourceId || ''))}:${d.lineNumber})`); });
-  win.webContents.on('render-process-gone', (e, d) => { log.write('error', 'The window crashed: ' + d.reason); writer.abortAll(); }); // (no half-written temporary files left behind)
+  /* The window's process died (out of memory, GPU fault…): no half-written temporary files, one dialog (Reload / Quit),
+     then win.reload() runs the start-up path again, which offers "Recover Last Session". Reloads are limited (a window that
+     dies again at once is not reloaded in a loop). The app tests reload without the dialog. */
+  win.webContents.on('render-process-gone', (e, d) => {
+    log.write('error', `The window process is gone: ${d.reason} (exit code ${d.exitCode})`); writer.abortAll();
+    if (d.reason === 'clean-exit' || !win || win.isDestroyed()) return;
+    if (!reloads.allow()) { log.write('error', 'The window died three times within a minute: not reloading it again.'); if (!SELFTEST) dialog.showMessageBoxSync({ type: 'error', title: 'AudioStage', message: 'The AudioStage window keeps crashing.', detail: 'AudioStage will close. Your work was autosaved: start it again and use File > Recover Last Session. The log files (Help > Show Log Files after restarting) have the details.' }); app.exit(1); return; }
+    const reload = () => { if (win && !win.isDestroyed()) { rendererReloads++; win.webContents.reload(); } };
+    if (SELFTEST) { reload(); return; }
+    dialog.showMessageBox(win, { type: 'error', title: 'AudioStage', buttons: ['Reload', 'Quit'], defaultId: 0, cancelId: 1, message: 'The AudioStage window stopped working' + (d.reason === 'oom' ? ' (out of memory).' : ` (${d.reason}).`), detail: 'Reload brings it back; AudioStage then offers to recover the session that was autosaved last. Unsaved changes made after the last autosave are lost.' })
+      .then((r) => { if (r.response === 0) reload(); else app.quit(); }).catch(reload);
+  });
+  win.webContents.on('unresponsive', () => {
+    log.write('warn', 'The window is not responding.');
+    if (SELFTEST || unresponsiveBox) return; unresponsiveBox = true;
+    dialog.showMessageBox(win, { type: 'warning', title: 'AudioStage', buttons: ['Wait', 'Reload'], defaultId: 0, cancelId: 0, message: 'The AudioStage window is not responding.', detail: 'It may be busy with a large file. Reload restarts the window (changes since the last autosave are lost).' })
+      .then((r) => { unresponsiveBox = false; if (r.response === 1 && win && !win.isDestroyed() && reloads.allow()) win.webContents.reload(); }).catch(() => { unresponsiveBox = false; });
+  });
+  win.webContents.on('responsive', () => log.write('info', 'The window responds again.'));
+  win.webContents.on('did-fail-load', (e, code, desc, url, isMain) => { if (isMain && code !== -3) log.write('error', `The window failed to load (${code} ${desc}) ${url}`); });
   win.on('closed', () => { win = null; writer.abortAll(); if (helpWin && !helpWin.isDestroyed()) helpWin.close(); });
-  if (SELFTEST) require('./tests/app/selftest')(app, win);
+  if (SELFTEST) require(process.env.AUDIOSTAGE_SELFTEST_DRIVER === 'crash' ? './tests/crash-driver' : './tests/app/selftest')(app, win);
 }
 
 app.whenReady().then(() => {
@@ -391,5 +444,5 @@ app.whenReady().then(() => {
   queueOpen(filesFromArgv(process.argv));
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
-app.on('before-quit', () => { vst.shutdown(); scanHost.shutdown(); runtimes.cancel('vst'); runtimes.cancel('ffmpeg'); });
+app.on('before-quit', () => { log.close(); vst.shutdown(); scanHost.shutdown(); runtimes.cancel('vst'); runtimes.cancel('ffmpeg'); });
 app.on('window-all-closed', () => { vst.shutdown(); scanHost.shutdown(); if (process.platform !== 'darwin') app.quit(); });

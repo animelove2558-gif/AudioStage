@@ -41,17 +41,20 @@ class VstHost {
   /* find a python that can import pedalboard (a success is cached until reset()) */
   detectPython() {
     if (this.pythonInfo) return this.pythonInfo;
+    // a failed detection is remembered for a minute: every vst:status / vst:call used to run up to three child processes again
+    if (this.noPython && Date.now() - this.noPython.at < 60000) return this.noPython.info;
     let lastErr = '';
     for (const { cmd, pre, source } of this.candidates()) {
-      const r = this.probe ? this.probe(cmd, pre) : spawnSync(cmd, [...pre, '-I', '-c', 'import pedalboard,numpy;print(pedalboard.__version__)'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+      const r = this.probe ? this.probe(cmd, pre) : spawnSync(cmd, [...pre, '-I', '-c', 'import pedalboard,numpy;print(pedalboard.__version__)'], { encoding: 'utf8', timeout: source === 'system' ? 10000 : 30000, windowsHide: true });
       if (r.status === 0) return (this.pythonInfo = { cmd, pre, source, pedalboard: String(r.stdout).trim() });
       if (r.error) { if (source !== 'system') lastErr = `${cmd}: ${r.error.code || r.error.message}`; continue; } // a missing system python says nothing new
       lastErr = /No module named/.test(r.stderr || '') ? 'The plugin-host packages (pedalboard) are not installed.' : (r.stderr || '').trim().split('\n').pop() || lastErr;
     }
-    return { error: lastErr || 'Python was not found.' };
+    const info = { error: lastErr || 'Python was not found.' }; this.noPython = { at: Date.now(), info };
+    return info;
   }
   /* forget the detected Python and stop the helper: the next request uses a runtime that was just installed / removed */
-  reset() { this.shutdown(); this.pythonInfo = null; }
+  reset() { this.shutdown(); this.pythonInfo = null; this.noPython = null; }
   hint() { return hintFor({ platform: process.platform, arch: process.arch, packaged: this.packaged }); }
   status() {
     const p = this.detectPython(), canInstall = process.platform === 'win32' && process.arch === 'x64';
@@ -84,6 +87,9 @@ class VstHost {
     };
     child.on('exit', (code, sig) => dead(`The plugin host stopped unexpectedly (${sig || 'exit ' + code}). The plugin probably crashed — reload it.`));
     child.on('error', (e) => dead('Cannot start the plugin host: ' + e.message));
+    // the helper died (a plugin crashed it) while a request was being written: EPIPE arrives here, not as an uncaught
+    // exception; the pending requests fail with the same message as an unexpected exit
+    child.stdin.on('error', (e) => dead(`The plugin host stopped unexpectedly (${e.code || e.message}). The plugin probably crashed — reload it.`));
   }
   request(cmd, args = {}, timeoutMs = 60000) {
     return new Promise((res, rej) => {
@@ -91,7 +97,10 @@ class VstHost {
       const id = this.seq++;
       const timer = setTimeout(() => { this.pending.delete(id); rej(new Error('The plugin host did not answer in time.')); }, timeoutMs);
       this.pending.set(id, { res, rej, timer });
-      this.child.stdin.write(JSON.stringify({ id, cmd, ...args }) + '\n');
+      const fail = (e) => { if (!this.pending.has(id)) return; this.pending.delete(id); clearTimeout(timer); rej(new Error(`The plugin host stopped unexpectedly (${(e && (e.code || e.message)) || 'write failed'}). The plugin probably crashed — reload it.`)); };
+      const stdin = this.child && this.child.stdin;
+      if (!stdin || !stdin.writable) { fail({ code: 'not running' }); return; }
+      try { stdin.write(JSON.stringify({ id, cmd, ...args }) + '\n', (e) => { if (e) fail(e); }); } catch (e) { fail(e); }
     });
   }
 
@@ -99,7 +108,9 @@ class VstHost {
   scan(extraDirs = []) {
     const out = [], seen = new Set();
     const exts = process.platform === 'darwin' ? ['.vst3', '.component'] : ['.vst3'];
+    let visited = 0; const deadline = Date.now() + 5000; // a huge folder added as a plugin folder must not freeze the app
     const walk = (dir, depth) => {
+      if (++visited > 20000 || Date.now() > deadline) return;
       let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
       for (const e of ents) {
         const full = path.join(dir, e.name), ext = path.extname(e.name).toLowerCase();
@@ -139,7 +150,7 @@ class VstHost {
    retries it. Before each load the entry is saved as "scanning", so if the whole app dies while a plugin loads, the
    next scan finds it and marks it crashed too. */
 const readScanCache = (f) => { try { const j = JSON.parse(fs.readFileSync(f, 'utf8')); if (j && j.plugins && typeof j.plugins === 'object') return j; } catch (e) { /* none yet */ } return { v: 1, plugins: {} }; };
-function writeScanCache(f, c) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(c)); fs.renameSync(f + '.tmp', f); }
+function writeScanCache(f, c) { require('./savefile').writeFileAtomic(f, JSON.stringify(c)); }
 /* list: [{path, name, kind}] (from scan()) → the same entries + {status, reason?, vendor?, version?, params?, skipped?}.
    o: { cacheFile, force (load again even if unchanged; crashed ones stay skipped), retry: [paths], timeoutMs, onProgress(i, n, item) } */
 async function verifyPlugins(host, list, o) {
