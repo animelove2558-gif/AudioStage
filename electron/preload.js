@@ -30,8 +30,10 @@ contextBridge.exposeInMainWorld('audioStageTts', {
   speak: (o) => ipcRenderer.invoke('tts:speak', o),
 });
 
+/* the main process never waits for the search for Python: it answers checking: true until it knows, and we ask again */
+const settled = async (ask, checking) => { for (let i = 0; i < 400; i++) { const r = await ask(); if (!checking(r)) return r; await new Promise((f) => setTimeout(f, 150)); } return ask(); };
 contextBridge.exposeInMainWorld('audioStageVst', {
-  status: () => ipcRenderer.invoke('vst:status'),
+  status: () => settled(() => ipcRenderer.invoke('vst:status'), (r) => r && r.checking),
   scan: (extraDirs) => ipcRenderer.invoke('vst:scan', extraDirs || []),
   browse: (what) => ipcRenderer.invoke('vst:browse', what),
   call: (cmd, args) => ipcRenderer.invoke('vst:call', cmd, args || {}),
@@ -44,7 +46,7 @@ contextBridge.exposeInMainWorld('audioStageVst', {
 
 // Optional runtimes installed into userData on request: 'vst' (Python + pedalboard) and 'ffmpeg' (LGPL build)
 contextBridge.exposeInMainWorld('audioStageRuntime', {
-  status: (kind) => ipcRenderer.invoke('rt:status', kind),
+  status: (kind) => settled(() => ipcRenderer.invoke('rt:status', kind), (r) => r && r.status && r.status.active && r.status.active.checking),
   install: (kind) => ipcRenderer.invoke('rt:install', kind),
   cancel: (kind) => ipcRenderer.invoke('rt:cancel', kind),
   remove: (kind) => ipcRenderer.invoke('rt:remove', kind),
@@ -125,4 +127,5 @@ contextBridge.exposeInMainWorld('audioStageMedia', {
   roots: () => ipcRenderer.invoke('media:roots'),
   list: (dir) => ipcRenderer.invoke('media:list', dir),
   read: (p) => ipcRenderer.invoke('media:read', p),
+  open: (p) => ipcRenderer.invoke('media:open', p), // may then be read in pieces (AS.disk)
 });

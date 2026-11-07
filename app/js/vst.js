@@ -40,6 +40,7 @@
     await app.runCustom('VST: ' + name, async (slice, sr) => {
       const res = await api.process(slice, sr, r.tail);
       if (!res.ok) { loaded = null; throw new Error(res.error); }
+      const bad = AS.dsp.sanitize(res.channels); if (bad && AS.onBadSamples) AS.onBadSamples(bad);
       return res.channels;
     });
     try { const s0 = loaded && await api.call('getState'); if (s0 && s0.ok && AS.favorites) AS.favorites.recorder.push({ type: 'vst', path: loaded.path, name, state: s0.state, tail: r.tail }); } catch (e) { /* recording a favorite is optional */ }
@@ -63,6 +64,7 @@
     if (!loaded || loaded.path !== st.path) { const r = ok(await api.call('load', { path: st.path })); loaded = { path: st.path, name: r.name, params: r.params }; }
     if (st.state) ok(await api.call('setState', { state: st.state }));
     const res = await api.process(chs, sr, st.tail || 0); if (!res.ok) { loaded = null; throw new Error(res.error); }
+    const bad = AS.dsp.sanitize(res.channels); if (bad && AS.onBadSamples) AS.onBadSamples(bad);
     return res.channels;
   }
 

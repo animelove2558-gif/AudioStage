@@ -105,6 +105,29 @@
     return out.buffer;
   }
 
+  /* FLAC written to disk while it is rendered: head(), then await encode(block) → bytes for each block, finish() → the rest */
+  function flacStream(nch, sr, bps, total) {
+    const maxv = Math.pow(2, bps - 1) - 1, BS = 4096; let hold = Array.from({ length: nch }, () => new Int32Array(0)), f = 0;
+    const toInts = (c) => { const o = new Int32Array(c.length); for (let i = 0; i < o.length; i++) { const v = c[i] > 1 ? 1 : c[i] < -1 ? -1 : c[i]; o[i] = Math.round(v * maxv); } return o; };
+    const join = (parts) => { let n = 0; for (const p of parts) n += p.length; const o = new Uint8Array(n); let a = 0; for (const p of parts) { o.set(p, a); a += p.length; } return o; };
+    return {
+      head() {
+        const si = new BitWriter(); si.bits(BS, 16); si.bits(BS, 16); si.bits(0, 24); si.bits(0, 24);
+        si.bits(sr, 20); si.bits(nch - 1, 3); si.bits(bps - 1, 5); si.bits(Math.floor(total / 4294967296), 4); si.bits(total % 4294967296, 32);
+        for (let i = 0; i < 16; i++) si.bits(0, 8);
+        const b = si.bytes(), o = new Uint8Array(8 + b.length); o.set([0x66, 0x4c, 0x61, 0x43, 0x80, 0, 0, 34]); o.set(b, 8); return o;
+      },
+      async encode(chs) {
+        const ints = chs.map((c, k) => { const x = toInts(c), j = new Int32Array(hold[k].length + x.length); j.set(hold[k]); j.set(x, hold[k].length); return j; });
+        const whole = Math.floor(ints[0].length / BS), parts = [];
+        for (let i = 0; i < whole; i++) { parts.push(encodeFrame(ints, i * BS, BS, bps, f++, sr)); if (i % 256 === 255) await new Promise((r) => setTimeout(r, 0)); }
+        hold = ints.map((x) => x.slice(whole * BS));
+        return join(parts);
+      },
+      finish() { return hold[0].length ? encodeFrame(hold, 0, hold[0].length, bps, f++, sr) : new Uint8Array(0); },
+    };
+  }
+
   /* MP3 via lamejs (global `lamejs` must be loaded). kbps CBR. */
   function encodeMp3(chs, sr, kbps, convertRate) {
     if (typeof lamejs === 'undefined') throw new Error('MP3 encoder not loaded');
@@ -124,7 +147,7 @@
     return out.buffer;
   }
 
-  const api = { encodeFlac, encodeMp3 };
+  const api = { encodeFlac, flacStream, encodeMp3 };
   root.AS = root.AS || {}; root.AS.codec = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

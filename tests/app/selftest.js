@@ -26,7 +26,10 @@ module.exports = function selftest(app, win) {
   win.webContents.on('render-process-gone', (e, d) => { errors.push('renderer gone: ' + d.reason); finish(1); });
   const timer = setTimeout(() => { console.log('SELFTEST TIMEOUT'); finish(1); }, +(process.env.AUDIOSTAGE_SELFTEST_TIMEOUT || 300000));
   let done = false;
-  function finish(code) { if (done) return; done = true; clearTimeout(timer); setTimeout(() => app.exit(code), 50); }
+  // AUDIOSTAGE_SELFTEST_MEM=1: report the peak memory of the main process and the window (measurements, not assertions)
+  const peak = { main: 0, win: 0 };
+  const memTimer = process.env.AUDIOSTAGE_SELFTEST_MEM ? setInterval(() => { for (const m of app.getAppMetrics()) { const kb = m.memory.privateBytes || m.memory.workingSetSize; if (m.type === 'Browser') peak.main = Math.max(peak.main, kb); else if (m.type === 'Tab') peak.win = Math.max(peak.win, kb); } }, 100) : null;
+  function finish(code) { if (done) return; done = true; clearTimeout(timer); if (memTimer) { clearInterval(memTimer); console.log(`memory peak (private bytes): main ${Math.round(peak.main / 1024)} MB, window ${Math.round(peak.win / 1024)} MB`); } setTimeout(() => app.exit(code), 50); }
 
   win.webContents.once('did-finish-load', async () => {
     let failed = 0, passed = 0;
@@ -35,9 +38,11 @@ module.exports = function selftest(app, win) {
       const only = process.env.AUDIOSTAGE_SELFTEST_ONLY;
       // phase 2 = a second start of the app on the same data folder (crash recovery): *.after-restart.scenario.js
       const phase2 = process.env.AUDIOSTAGE_SELFTEST_PHASE === '2';
-      const files = fs.readdirSync(__dirname).filter((f) => f.endsWith('.scenario.js') && f.includes('.after-restart.') === phase2 && (!only || f.includes(only))).sort();
+      // AUDIOSTAGE_SELFTEST_EXTRA=<absolute path>: run only that scenario file (one-off measurements kept outside the repo)
+      const extra = process.env.AUDIOSTAGE_SELFTEST_EXTRA;
+      const files = extra ? [extra] : fs.readdirSync(__dirname).filter((f) => f.endsWith('.scenario.js') && f.includes('.after-restart.') === phase2 && (!only || f.includes(only))).sort();
       for (const f of files) {
-        const fn = require(path.join(__dirname, f));
+        const fn = require(path.resolve(__dirname, f));
         console.log(`\n=== app: ${f} ===`);
         const code = `(async () => { const H = ${PRELUDE}; await (${fn.toString()})(H); return H.results; })()`;
         let res;

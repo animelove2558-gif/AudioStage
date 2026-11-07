@@ -86,6 +86,12 @@
     return out;
   }
   const sliceCh = (chs, s, e) => chs.map((c) => c.slice(s, e));
+  /* NaN / Infinity → 0, in place; returns how many samples were bad. Files with such samples do not play elsewhere. */
+  function sanitize(chs) {
+    let bad = 0;
+    for (const c of chs) for (let i = 0; i < c.length; i++) { const v = c[i]; if (v - v !== 0) { c[i] = 0; bad++; } } // (v - v is NaN for NaN and ±Infinity)
+    return bad;
+  }
 
   /* ---------- biquad ---------- */
   function biquadCoefs(type, sr, f, q, gainDb) {
@@ -1603,7 +1609,7 @@
   }
 
   const api = {
-    toDb, fromDb, clamp, fft, hann, cloneCh, mixMono, concatCh, spliceCh, sliceCh, matchChannels, biquadCoefs, applyBiquad, filterCh,
+    sanitize, toDb, fromDb, clamp, fft, hann, cloneCh, mixMono, concatCh, spliceCh, sliceCh, matchChannels, biquadCoefs, applyBiquad, filterCh,
     resample, convertRate, timeStretch, pitchShift, clipStretch, fixLen, gainCh, peakOf, normalize, dcRemove, ramp, invert, reverse, silence,
     compressor, limiter, gate, createDynamics, detectTempo, echo, modDelay, phaser, tremolo, distortion, bitcrush, reverb, eqBands, stereoWidth, balance, centerRemove,
     adaptiveNR, speechLeveler, spectralEdit, musicRemix, soundRemoveNMF, classifySound, reverbIR, curveIR, phaseIR, PHASE_FREQS, sciFilter, sectionsResponse, granularShift, pitchBend, gainEnvelope, declip, detectAudio, deleteSilence, hissReduce, doppler, channelMix, estimateT60, dereverb, dereverbOpts, dereverbState, dereverbFrame, DEREVERB_FOCUS,

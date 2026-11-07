@@ -12,7 +12,15 @@
   /* a source = immutable audio snapshot {name, sr, ch} */
   function makeSource(name, sr, ch) { return { name, sr, ch, dur: ch[0].length / sr }; }
   function srcPeaks(src) { return src._pk || (src._pk = new AS.Peaks(src.ch)); }
-  function srcBuffer(src) { return src._ab || (src._ab = AS.engine.toBuffer(src.ch, src.sr)); }
+  function srcBuffer(src) { return AS.abCache.get(src, () => AS.engine.toBuffer(src.ch, src.sr)); }
+  /* an AudioBuffer of only [off, off + dur) seconds of a source, not kept (rendering long sessions in slices):
+     { buffer, offset: where off lies in it } */
+  function bufferWindow(src, off, dur) {
+    const n = src.ch[0].length, i0 = Math.max(0, Math.min(n - 1, Math.floor(off * src.sr))), i1 = Math.max(i0 + 1, Math.min(n, Math.ceil((off + dur) * src.sr) + 2));
+    const b = new AudioBuffer({ numberOfChannels: src.ch.length, length: i1 - i0, sampleRate: src.sr });
+    src.ch.forEach((c, k) => b.copyToChannel(c.subarray(i0, i1), k));
+    return { buffer: b, offset: off - i0 / src.sr };
+  }
   const zcmp = (a, b) => (a.z || 0) - (b.z || 0) || a.id - b.id; // clip stacking order: back → front
   const jclone = (o) => (o === undefined ? undefined : JSON.parse(JSON.stringify(o)));
 
@@ -304,13 +312,18 @@
      to dest — freezing and bouncing render through the normal graph this way; the track is built even if muted. */
   function buildGraph(ctx, dest, session, fromT, t0, toT, input, opts) {
     const R = AS.rack, RT = AS.routing, live = typeof AudioContext !== 'undefined' && ctx instanceof AudioContext;
-    const sources = [], plan = RT.plan(session), keys = {}, nodes = {}, tap = opts && opts.tap;
+    const sources = [], plan = RT.plan(session), keys = {}, nodes = {}, tap = opts && opts.tap, win = !!(opts && opts.window); // window: AudioBuffers of only the part played
     if (tap) plan.audible.add(tap.id);
     const ex = { nodes: sources, t0, regs: [], meters: live ? (AS.engine.meters = {}) : null, owner: 'master' };
     ex.key = (id) => { if (!plan.keyOk(id, ex.owner)) return null; return keys[id] || (keys[id] = ctx.createGain()); };
     const envNodes = live ? (AS.engine.envNodes = {}) : null; // clip id -> envelope params, for edits while playing
     const master = session.master || (session.master = { vol: 0, fx: [] }), surround = (session.opts || session.settings || {}).channels === 6;
     const masterIn = ctx.createGain(); masterIn.gain.value = D.fromDb(master.vol);
+    if (live && ctx._wl === true) { // (offline renders are checked when the block is finished: AS.dsp.sanitize)
+      const guard = new AudioWorkletNode(ctx, 'as-guard', { channelCountMode: 'max', channelInterpretation: 'discrete' });
+      guard.port.onmessage = (e) => { if (e.data.bad && AS.onLiveBad) AS.onLiveBad(e.data.bad); };
+      guard.connect(dest); dest = guard; sources.push(guard);
+    }
     if (surround) { // 5.1 master: six discrete channels; the master rack (stereo effects) is bypassed
       masterIn.channelCount = 6; masterIn.channelCountMode = 'explicit'; masterIn.channelInterpretation = 'discrete'; masterIn.connect(dest);
     } else R.applyRack(ctx, master, masterIn, ex, 'master').connect(dest);
@@ -331,7 +344,7 @@
       if (t.type === 'bus') continue;
       if (frozen) { // frozen track: one buffer (clips + clip & track effects, rendered by Freeze) instead of its clips
         const fs = t.frozen.src, end = toT != null ? Math.min(toT, fs.dur) : fs.dur;
-        if (end > fromT + 0.0005) { const bs = ctx.createBufferSource(); bs.buffer = srcBuffer(fs); bs.connect(tin); bs.start(t0, fromT, end - fromT); sources.push(bs); }
+        if (end > fromT + 0.0005) { const bs = ctx.createBufferSource(); if (win) { const w = bufferWindow(fs, fromT, end - fromT); bs.buffer = w.buffer; bs.connect(tin); bs.start(t0, w.offset, end - fromT); } else { bs.buffer = srcBuffer(fs); bs.connect(tin); bs.start(t0, fromT, end - fromT); } sources.push(bs); }
         continue;
       }
       if (input && live && t.arm && t.monitor) { // input monitoring (stop() also has to cut the input -> monitor edge)
@@ -343,7 +356,7 @@
         const dur = Math.min(c.dur - rel0, toT != null ? toT - Math.max(fromT, c.start) : Infinity);
         if (dur <= 0.0005) continue;
         const ps = AS.cstretch.play(c); if (!ps) continue; // time-stretched audio still rendering (the app waits for it)
-        const bs = ctx.createBufferSource(); bs.buffer = srcBuffer(ps);
+        const bs = ctx.createBufferSource();
         const g = ctx.createGain(); scheduleFades(g.gain, c, rel0, when, D.fromDb(c.gain));
         bs.connect(g);
         const hid = session.hiddenRanges ? session.hiddenRanges(t, c) : [];
@@ -352,9 +365,11 @@
         const node = ENV.build(ctx, c, gin, rel0, when, envNodes); // clip volume + pan envelopes
         R.applyRack(ctx, c, node, ex, 'c:' + c.id).connect(tin);
         if (c.loop && c.loopLen > 0) { // looped clip: the unit [loopOff, loopOff + loopLen) repeats seamlessly
-          bs.loop = true; bs.loopStart = c.loopOff; bs.loopEnd = c.loopOff + c.loopLen;
-          bs.start(when, c.loopOff + ((((c.off - c.loopOff + rel0) % c.loopLen) + c.loopLen) % c.loopLen), dur);
-        } else bs.start(when, c.off + rel0, dur);
+          const w = win ? bufferWindow(ps, c.loopOff, c.loopLen) : { buffer: srcBuffer(ps), offset: c.loopOff }; bs.buffer = w.buffer;
+          bs.loop = true; bs.loopStart = w.offset; bs.loopEnd = w.offset + c.loopLen;
+          bs.start(when, w.offset + ((((c.off - c.loopOff + rel0) % c.loopLen) + c.loopLen) % c.loopLen), dur);
+        } else if (win) { const w = bufferWindow(ps, c.off + rel0, dur); bs.buffer = w.buffer; bs.start(when, w.offset, dur); }
+        else { bs.buffer = srcBuffer(ps); bs.start(when, c.off + rel0, dur); }
         sources.push(bs);
       }
     }
@@ -380,19 +395,67 @@
     return sources;
   }
 
-  /* offline render of [from, to) (+ effect tails). tap: { id, point: 'pre' | 'out' } renders only that track's
-     signal (Freeze = after its effects, Bounce Track = after its pan) — the rest of the graph is built as usual. */
-  async function renderRange(session, sr, from, to, tap, tail) {
+  /* A range up to cfg.LONG_S seconds is one OfflineAudioContext. A longer one is rendered in slices of cfg.SLICE_S, so no
+     context ever holds the whole range (2 h stereo 48 kHz would be 5.5 GB in one). Every slice starts cfg.PRE_S earlier
+     with its output discarded, so reverbs, delays and dynamics have their state by the time the kept part starts, and
+     consecutive slices overlap by cfg.XF_S with a short crossfade. Effects with a free-running LFO (chorus, flanger,
+     tremolo) restart their phase at each slice; the crossfade keeps that from clicking. */
+  const renderCfg = { LONG_S: 1200, SLICE_S: 300, PRE_S: 20, XF_S: 0.05 };
+  const cancelled = () => Object.assign(new Error('Cancelled'), { cancelled: true });
+  function renderPlan(session, sr, from, to, tail) {
     const R = AS.rack, anyTail = session.tracks.some((t) => R.hasTail(t.fx) || t.clips.some((c) => R.hasTail(c.fx))) || R.hasTail((session.master || {}).fx);
-    const len = Math.max(1, Math.ceil((to - from + (tail != null ? tail : anyTail ? 3 : 0.05)) * sr));
+    return { frames: Math.max(1, Math.ceil((to - from + (tail != null ? tail : anyTail ? 3 : 0.05)) * sr)), sliced: to - from > renderCfg.LONG_S };
+  }
+  /* one OfflineAudioContext: frames samples of the timeline from `from`, sources stopping at `to` */
+  async function renderOnce(session, sr, nch, from, to, frames, tap, windowed) {
+    const R = AS.rack, oc = new OfflineAudioContext(nch, frames, sr), o = windowed ? { window: true } : {};
+    await R.loadWorklets(oc);
+    if (tap) buildGraph(oc, oc.createGain(), session, from, 0, to, null, { ...o, tap: { ...tap, dest: oc.destination } });
+    else { if (nch === 6) { oc.destination.channelCount = 6; oc.destination.channelInterpretation = 'discrete'; } buildGraph(oc, oc.destination, session, from, 0, to, null, o); }
+    return oc.startRendering();
+  }
+  /* streams [from, to) (+ tail): onBlock(channels, startFrame, totalFrames) gets consecutive blocks and may be async.
+     o: { signal: { aborted }, onProgress(done, total) } */
+  async function renderStream(session, sr, from, to, tap, tail, onBlock, o) {
+    const oo = o || {}, plan = renderPlan(session, sr, from, to, tail), F = plan.frames;
     await AS.cstretch.ensureAll(session); // time-stretched clips must be rendered first
     const nch = !tap && (session.opts || session.settings || {}).channels === 6 ? 6 : 2; // a 5.1 session mixes down to 6 channels
-    const oc = new OfflineAudioContext(nch, len, sr);
-    await R.loadWorklets(oc);
-    if (tap) buildGraph(oc, oc.createGain(), session, from, 0, to, null, { tap: { ...tap, dest: oc.destination } });
-    else { if (nch === 6) { oc.destination.channelCount = 6; oc.destination.channelInterpretation = 'discrete'; } buildGraph(oc, oc.destination, session, from, 0, to); }
-    const out = await oc.startRendering();
-    return { sr, ch: Array.from({ length: nch }, (_, c) => out.getChannelData(c).slice()) };
+    const sliceN = plan.sliced ? Math.round(renderCfg.SLICE_S * sr) : F, xfN = Math.round(renderCfg.XF_S * sr), preN = Math.round(renderCfg.PRE_S * sr);
+    let prevTail = null, bad = 0;
+    for (let f0 = 0; f0 < F; f0 += sliceN) {
+      if (oo.signal && oo.signal.aborted) throw cancelled();
+      const f1 = Math.min(F, f0 + sliceN), last = f1 >= F, pre = Math.min(f0, preN), over = last ? 0 : Math.min(xfN, F - f1);
+      const start = from + (f0 - pre) / sr, frames = pre + (f1 - f0) + over, stopAt = Math.min(to, start + frames / sr);
+      const out = await renderOnce(session, sr, nch, start, stopAt, frames, tap, plan.sliced);
+      const block = [], tails = [];
+      for (let c = 0; c < nch; c++) {
+        const x = out.getChannelData(c), y = plan.sliced ? x.slice(pre, pre + (f1 - f0)) : x;
+        if (prevTail) { const p = prevTail[c], n = Math.min(p.length, y.length); for (let i = 0; i < n; i++) { const u = (i + 0.5) / n; y[i] = p[i] * (1 - u) + y[i] * u; } }
+        if (over) tails.push(x.slice(pre + (f1 - f0), pre + (f1 - f0) + over));
+        block.push(y);
+      }
+      bad += D.sanitize(block);
+      prevTail = over ? tails : null;
+      await onBlock(block, f0, F);
+      if (oo.onProgress) oo.onProgress(f1, F);
+      if (plan.sliced) await new Promise((r) => setTimeout(r, 0)); // between slices: the UI runs, the finished context can be collected
+    }
+    if (bad && AS.onBadSamples) AS.onBadSamples(bad);
+    return { sr, nch, frames: F };
+  }
+  /* offline render of [from, to) (+ effect tails) into memory. tap: { id, point: 'pre' | 'out' } renders only that track's
+     signal (Freeze = after its effects, Bounce Track = after its pan) — the rest of the graph is built as usual. */
+  async function renderRange(session, sr, from, to, tap, tail, o) {
+    let ch = null;
+    await renderStream(session, sr, from, to, tap, tail, (block, f0, F) => {
+      if (f0 === 0 && block[0].length >= F) { ch = block; return; } // one context: its own arrays, no second copy
+      if (!ch) {
+        try { ch = block.map(() => new Float32Array(F)); }
+        catch (e) { throw new Error(`This range is too long to hold in memory (${((F * block.length * 4) / 1073741824).toFixed(1)} GB). Export it as WAV or FLAC instead: those are written to disk while rendering.`); }
+      }
+      block.forEach((c, i) => ch[i].set(c, f0));
+    }, o);
+    return { sr, ch };
   }
   async function renderMix(session, sr) {
     const total = session.duration;
@@ -1154,6 +1217,6 @@
     }
   }
 
-  AS.applyComp = applyComp; AS.renderRange = renderRange;
+  AS.applyComp = applyComp; AS.renderRange = renderRange; AS.renderStream = renderStream; AS.renderCfg = renderCfg;
   AS.Session = Session; AS.MultiView = MultiView; AS.makeSource = makeSource; AS.renderMix = renderMix; AS.buildGraph = buildGraph; AS.fadeGainAt = fadeGainAt; AS.CURVES = CURVES; AS.cloneClipProps = cloneClipProps;
 })(window);

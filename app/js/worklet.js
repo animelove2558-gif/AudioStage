@@ -2,6 +2,24 @@
 const fromDb = (d) => Math.pow(10, d / 20);
 const smooth = (ms, sr) => (ms <= 0 ? 0 : Math.exp(-1 / (ms * 0.001 * sr)));
 
+/* Last stop of the live graph: NaN / Infinity from an effect become silence before they reach the speakers, and the app is
+   told (at most once a second), so it can rebuild the graph: recursive effect state stays poisoned until then. */
+class GuardProcessor extends AudioWorkletProcessor {
+  constructor() { super(); this.bad = 0; this.last = 0; }
+  process(inputs, outputs) {
+    const inp = inputs[0], out = outputs[0];
+    if (!inp || !inp.length) return true;
+    let bad = 0;
+    for (let c = 0; c < out.length; c++) {
+      const x = inp[Math.min(c, inp.length - 1)], y = out[c];
+      for (let i = 0; i < y.length; i++) { const v = x[i]; if (v - v !== 0) { y[i] = 0; bad++; } else y[i] = v; }
+    }
+    if (bad) { this.bad += bad; if (currentTime - this.last >= 1 || !this.last) { this.last = currentTime; this.port.postMessage({ bad: this.bad }); this.bad = 0; } }
+    return true;
+  }
+}
+registerProcessor('as-guard', GuardProcessor);
+
 /* Noise gate with hysteresis, hold and smoothed attack/release; channels are linked. */
 class GateProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {

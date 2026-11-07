@@ -162,12 +162,17 @@
   const MB_KEY = 'as-mediabrowser', mbs = (() => { try { return { auto: true, loop: false, ...(JSON.parse(localStorage.getItem(MB_KEY)) || {}) }; } catch (e) { return { auto: true, loop: false }; } })();
   const prev = { src: null, path: '', cache: new Map() }; // preview: one BufferSource straight to the speakers (not part of any mix)
   const nameOf = (p) => p.split(/[\\/]/).pop();
-  async function mediaFile(p) { const r = await media.read(p); if (!r.ok) throw new Error(r.error); return new File([r.data], nameOf(p)); }
+  async function mediaFile(p) { const r = await media.open(p); if (!r.ok) throw new Error(r.error); const f = AS.disk.lazyFile(AS.disk.fromInfo(r.path, r.name, r.size)); f.asPath = ''; return f; } // read in pieces; not a Save target
   function stopPreview() { if (prev.src) { try { prev.src.onended = null; prev.src.stop(); prev.src.disconnect(); } catch (e) { /* */ } prev.src = null; } prev.path = ''; const b = P.defs.media && P.defs.media.body; if (b) b.querySelectorAll('.mbi.playing').forEach((x) => x.classList.remove('playing')); }
   async function preview(p) {
     stopPreview(); if (!AUDIO_EXT.test(p)) return null; eng.init();
     let buf = prev.cache.get(p);
-    if (!buf) { const f = await mediaFile(p); buf = await eng.ctx.decodeAudioData(await f.arrayBuffer()); prev.cache.set(p, buf); if (prev.cache.size > 8) prev.cache.delete(prev.cache.keys().next().value); }
+    if (!buf) {
+      const f = await mediaFile(p), res = /\.(wav|wave)$/i.test(p) ? null : await AS.decode.audio(await f.arrayBuffer());
+      buf = res ? eng.toBuffer(res.ch, res.sr) : await eng.ctx.decodeAudioData(await f.arrayBuffer());
+      prev.cache.set(p, buf); let bytes = 0; for (const x of prev.cache.values()) bytes += x.length * x.numberOfChannels * 4; // at most 8 files and 512 MB
+      for (const k of prev.cache.keys()) { if (k === p || (prev.cache.size <= 8 && bytes <= 512 * 1048576)) break; const x = prev.cache.get(k); bytes -= x.length * x.numberOfChannels * 4; prev.cache.delete(k); }
+    }
     const s = eng.ctx.createBufferSource(); s.buffer = buf; s.loop = !!mbs.loop; s.connect(eng.ctx.destination); s.start();
     s.onended = () => { if (prev.src === s) stopPreview(); };
     prev.src = s; prev.path = p;

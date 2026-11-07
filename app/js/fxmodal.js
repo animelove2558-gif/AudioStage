@@ -227,7 +227,7 @@
   BODIES.convreverb = (w) => {
     const box = genericBody(w), b = h('button', 'btn', 'Load impulse response file…'), name = h('span', 'note', R.customIR ? 'Loaded: ' + R.customIR.name : 'No custom file loaded'), inp = h('input'); inp.type = 'file'; inp.accept = 'audio/*,.wav'; inp.hidden = true;
     b.addEventListener('click', () => inp.click());
-    inp.addEventListener('change', async () => { const f = inp.files[0]; if (!f) return; try { AS.engine.init(); const ab = await AS.engine.ctx.decodeAudioData(await f.arrayBuffer()); R.setCustomIR(f.name, Array.from({ length: Math.min(2, ab.numberOfChannels) }, (_, i) => ab.getChannelData(i).slice()), ab.sampleRate); name.textContent = 'Loaded: ' + f.name; w.set('ir', 'custom'); w.refresh(); } catch (e) { UI.toast('Cannot read that file: ' + e.message, 'error'); } });
+    inp.addEventListener('change', async () => { const f = inp.files[0]; if (!f) return; try { const ab = await new OfflineAudioContext(1, 1, (AS.engine.ctx && AS.engine.ctx.sampleRate) || 48000).decodeAudioData(await f.arrayBuffer()); R.setCustomIR(f.name, Array.from({ length: Math.min(2, ab.numberOfChannels) }, (_, i) => ab.getChannelData(i).slice()), ab.sampleRate); name.textContent = 'Loaded: ' + f.name; w.set('ir', 'custom'); w.refresh(); } catch (e) { UI.toast('Cannot read that file: ' + e.message, 'error'); } });
     box.append(group('Custom impulse', b, name, inp)); return box;
   };
 

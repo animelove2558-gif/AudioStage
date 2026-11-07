@@ -5,13 +5,15 @@
   function decodeWav(buf) {
     const dv = new DataView(buf);
     const tag = (o) => String.fromCharCode(dv.getUint8(o), dv.getUint8(o + 1), dv.getUint8(o + 2), dv.getUint8(o + 3));
-    if (buf.byteLength < 44 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
-    let pos = 12, fmt = null, dataOff = 0, dataLen = 0;
+    if (buf.byteLength < 44 || (tag(0) !== 'RIFF' && tag(0) !== 'RF64') || tag(8) !== 'WAVE') return null;
+    let pos = 12, fmt = null, dataOff = 0, dataLen = 0, ds64Data = 0;
     const cues = [], labels = {}, lengths = {}; let bext = null, cart = null;
     const str = (o, n) => { let s = ''; for (let i = 0; i < n; i++) { const c = dv.getUint8(o + i); if (!c) break; s += String.fromCharCode(c); } return s; };
     while (pos + 8 <= buf.byteLength) {
       const id = tag(pos);
       let size = dv.getUint32(pos + 4, true);
+      if (id === 'ds64') ds64Data = dv.getUint32(pos + 16, true) + dv.getUint32(pos + 20, true) * 4294967296;
+      if (id === 'data' && size === 0xffffffff && ds64Data) size = ds64Data; // RF64
       if (id === 'fmt ') {
         fmt = { format: dv.getUint16(pos + 8, true), ch: dv.getUint16(pos + 10, true), sr: dv.getUint32(pos + 12, true), bits: dv.getUint16(pos + 22, true) };
         if (fmt.format === 0xfffe && size >= 40) { fmt.mask = dv.getUint32(pos + 28, true); fmt.format = dv.getUint16(pos + 32, true); }
@@ -95,6 +97,36 @@
 
   /* speaker positions of the channels (WAVE_FORMAT_EXTENSIBLE dwChannelMask): 5.1 = L R C LFE Ls Rs */
   const CHANNEL_MASKS = { 3: 0x7, 4: 0x33, 5: 0x37, 6: 0x3f, 8: 0x63f };
+  /* A WAV written to disk while it is rendered: head(), then samples(block) for each block in order. Data over 4 GB uses
+     RF64 (EBU Tech 3306), since the RIFF size fields stop at 32 bits. o.rf64: force it (tests). */
+  function stream(nch, sr, bits, frames, dither, o) {
+    const fmt = bits === 32 ? 3 : 1, bps = bits / 8, dataLen = frames * nch * bps, pad = dataLen % 2, rf64 = (o && o.rf64) || dataLen + 100 > 0xfffffff0, ext = nch > 2;
+    return {
+      rf64,
+      head() {
+        const fmtN = ext ? 40 : 16, H = 12 + (rf64 ? 36 : 0) + 8 + fmtN + 8, b = new ArrayBuffer(H), dv = new DataView(b), w = (p, s) => { for (let i = 0; i < 4; i++) dv.setUint8(p + i, s.charCodeAt(i)); };
+        let p = 12; const riff = H - 8 + dataLen + pad;
+        w(0, rf64 ? 'RF64' : 'RIFF'); dv.setUint32(4, rf64 ? 0xffffffff : riff, true); w(8, 'WAVE');
+        if (rf64) {
+          const u64 = (at, v) => { dv.setUint32(at, v % 4294967296, true); dv.setUint32(at + 4, Math.floor(v / 4294967296), true); };
+          w(p, 'ds64'); dv.setUint32(p + 4, 28, true); u64(p + 8, riff); u64(p + 16, dataLen); u64(p + 24, frames); dv.setUint32(p + 32, 0, true); p += 36;
+        }
+        w(p, 'fmt '); dv.setUint32(p + 4, fmtN, true); dv.setUint16(p + 8, ext ? 0xfffe : fmt, true); dv.setUint16(p + 10, nch, true); dv.setUint32(p + 12, sr, true);
+        dv.setUint32(p + 16, sr * nch * bps, true); dv.setUint16(p + 20, nch * bps, true); dv.setUint16(p + 22, bits, true);
+        if (ext) {
+          dv.setUint16(p + 24, 22, true); dv.setUint16(p + 26, bits, true); dv.setUint32(p + 28, CHANNEL_MASKS[nch] || 0, true);
+          dv.setUint32(p + 32, fmt, true); dv.setUint16(p + 36, 0, true); dv.setUint16(p + 38, 0x10, true); [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71].forEach((v, i) => dv.setUint8(p + 40 + i, v));
+        }
+        p += 8 + fmtN; w(p, 'data'); dv.setUint32(p + 4, rf64 ? 0xffffffff : dataLen, true);
+        return new Uint8Array(b);
+      },
+      samples(chs) { // (same sample conversion as encodeWav: its body, no header)
+        const whole = encodeWav(chs, sr, bits, dither, null), h = chs.length > 2 ? 68 : 44;
+        return new Uint8Array(whole, h, chs[0].length * nch * bps);
+      },
+      tail() { return pad ? new Uint8Array(1) : new Uint8Array(0); },
+    };
+  }
   function encodeWav(chs, sr, bits, dither, opts) {
     const nch = chs.length, L = chs[0].length, fmt = bits === 32 ? 3 : 1, bps = bits / 8;
     const ext = nch > 2, H = ext ? 68 : 44; // more than 2 channels: WAVE_FORMAT_EXTENSIBLE (40-byte fmt) with the speaker mask
@@ -132,6 +164,6 @@
   }
 
   root.AS = root.AS || {};
-  root.AS.wav = { decodeWav, encodeWav, CHANNEL_MASKS };
+  root.AS.wav = { decodeWav, encodeWav, stream, CHANNEL_MASKS };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.AS.wav;
 })(typeof window !== 'undefined' ? window : globalThis);

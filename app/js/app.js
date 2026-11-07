@@ -45,6 +45,16 @@
   const multi = new AS.MultiView($('#multiMode'), app);
   app.wave = wave; app.multi = multi;
   const status = (m) => { $('#statusMsg').textContent = m; };
+  /* invalid samples reached the live master: rebuild the graph, which resets every effect's state; twice in 10 s = stop */
+  let liveBadAt = 0;
+  AS.onLiveBad = () => {
+    const now = performance.now(), again = now - liveBadAt < 10000; liveBadAt = now; app.liveBadCount = (app.liveBadCount || 0) + 1;
+    if (!eng.playing || app.mode !== 'multi' || app.recording) return; // (while recording: never a gap for the performer; the guard keeps it silent)
+    if (again) { stop(false); UI.toast('Playback stopped: an effect keeps producing invalid audio. Check its settings or remove it.', 'error'); }
+    else { UI.toast('An effect produced invalid audio (NaN / Infinity). Its state was reset.', 'error'); playMulti(eng.pos()); }
+    if (window.audioStageHelp) window.audioStageHelp.log('warn', 'Invalid samples at the live master').catch(() => {});
+  };
+  AS.onBadSamples = (n) => { const m = 'A render produced ' + n + ' invalid samples (NaN / Infinity) from an effect. They were replaced by silence.'; UI.toast(m, 'error'); if (window.audioStageHelp) window.audioStageHelp.log('warn', m).catch(() => {}); };
 
   /* ================= Documents ================= */
   // undo memory limit (engine.js Doc.undoBudget): say once per file when old steps had to go
@@ -68,18 +78,17 @@
     const i = app.docs.indexOf(d); app.docs.splice(i, 1);
     setCurrent(app.docs[Math.max(0, i - 1)] || null);
   }
+  const isVideoFile = (f) => /^video\//.test(f.type) || /\.(mp4|mov|mkv|webm|m4v)$/i.test(f.name);
   /* File -> {sr, ch, markers?, cart?, bext?} (own WAV reader first, then the system decoder) */
   async function decodeFile(f, pre) {
     const buf = pre || (await f.arrayBuffer());
-    let res = null;
+    const keep = pre && isVideoFile(f); // (a video read from disk in pieces: its bytes stay, for the preview)
+    let res = null, tags = null;
+    try { tags = AS.tags.read(new Uint8Array(buf)); } catch (e) { /* no tags */ } // before decoding, which empties buf
     if (/\.(wav|wave)$/i.test(f.name)) { try { res = AS.wav.decodeWav(buf); } catch (e) { res = null; } }
-    try { res && (res.tags = AS.tags.read(new Uint8Array(buf))); } catch (e) { /* no tags */ }
-    if (!res) {
-      eng.init();
-      const ab = await eng.ctx.decodeAudioData(buf.slice(0));
-      res = { sr: ab.sampleRate, ch: Array.from({ length: ab.numberOfChannels }, (_, i) => ab.getChannelData(i).slice()), tags: AS.tags.read(new Uint8Array(buf)) };
-    }
-    if (pre) res.buf = buf; // (a file read from disk in pieces: kept for the video preview)
+    if (!res) res = await AS.decode.audio(keep ? buf.slice(0) : buf); // at the file's own rate, no output device needed
+    res.tags = tags;
+    if (keep) res.buf = buf;
     return res;
   }
   /* files: File objects, or files read from disk only now, one at a time (AS.disk.lazyFile: File > Open, recent
@@ -93,18 +102,18 @@
         await UI.busy('Opening ' + f.name + '…', async () => {
           const pre = f.lazy ? await f.arrayBuffer({ signal: ctl, onProgress: (a, n) => UI.busyMsg(`Reading ${f.name}… ${Math.round((100 * a) / Math.max(1, n))} %`) }) : null;
           const res = await decodeFile(f, pre);
+          // the browser's audio engine cannot play or draw these (AudioBuffer limits): say so now, not with an error on every frame
+          if (!(res.sr >= 3000 && res.sr <= 768000)) throw new Error(`the sample rate ${res.sr} Hz is not supported (3000 to 768000 Hz)`);
+          if (!res.ch.length || res.ch.length > 32) throw new Error(`${res.ch.length} channels are not supported (1 to 32)`);
           const nd = addDoc(f.name, res.sr, res.ch);
           if (res.bits) nd.bits = res.bits;
           nd.path = f.asPath || (window.audioStageRecent ? window.audioStageRecent.pathOf(f) : '') || ''; nd.savable = !!f.asPath; // Save writes back there (files opened through the app)
-          if (/^video\//.test(f.type) || /\.(mp4|mov|mkv|webm|m4v)$/i.test(f.name)) { nd.videoUrl = URL.createObjectURL(f.lazy ? new Blob([res.buf]) : f); updateVideo(); }
+          if (isVideoFile(f)) { nd.videoUrl = URL.createObjectURL(f.lazy ? new Blob([res.buf]) : f); updateVideo(); }
           res.buf = null;
           if (res.markers && res.markers.length) { nd.markers = res.markers; updateMarkers(); }
           nd.meta = AS.tags.clean({ title: (res.cart && res.cart.title) || (res.bext && res.bext.description) || '', artist: (res.cart && res.cart.artist) || '', ...(res.tags || {}) }); // kept, so saving again keeps the tags
         }, f.lazy ? () => { ctl.aborted = true; stopAll = true; } : undefined);
         AS.recent.note('files', f); // File > Open Recent
-          // the browser's audio engine cannot play or draw these (AudioBuffer limits): say so now, not with an error on every frame
-          if (!(res.sr >= 3000 && res.sr <= 768000)) throw new Error(`the sample rate ${res.sr} Hz is not supported (3000 to 768000 Hz)`);
-          if (!res.ch.length || res.ch.length > 32) throw new Error(`${res.ch.length} channels are not supported (1 to 32)`);
       } catch (e) { if (e && e.cancelled) { UI.toast('Opening cancelled.'); stopAll = true; } else UI.toast(`Cannot open “${f.name}”: ${e.message || 'unsupported format'}`, 'error'); }
     }
     if (app.mode === 'multi') setMode('wave');
@@ -161,6 +170,18 @@
     set('#iVwB', fmtDisp(vs)); set('#iVwE', fmtDisp(Math.min(d.dur, vs + vl))); set('#iVwL', fmtDisp(Math.min(d.dur, vl)));
     $('#fmtInfo').textContent = `${d.sr} Hz · ${d.ch.length === 1 ? 'Mono' : d.ch.length === 2 ? 'Stereo' : d.ch.length + ' ch'} · 32-bit float · ${fmtTime(d.dur)}`;
   }
+
+  /* ================= Audio device problems ================= */
+  eng.onProblem = (level, msg) => {
+    UI.toast(msg, level === 'error' ? 'error' : undefined);
+    if (window.audioStageHelp) window.audioStageHelp.log(level, msg).catch(() => {});
+  };
+  /* the context clock stopped while "playing" (no device, a driver that stopped, or the context closed): the transport
+     stops and says why, instead of showing a moving state with no sound */
+  eng.onStalled = (state) => {
+    if (eng.playing) stop(false);
+    eng.report('error', state === 'closed' ? 'The audio device was lost, so playback stopped. Press Play to start on a new connection.' : 'Playback stopped: the audio device is not responding (' + state + '). Check the output device in Preferences > Audio Hardware, then press Play.');
+  };
 
   /* ================= Mode ================= */
   function setMode(m) {
@@ -256,9 +277,16 @@
     return AS.cstretch.ensure(c).then(() => { status('Time-stretch ready.'); multi.draw(); app.multiChanged(true); }, (e) => reportErr(e));
   };
   app.status = (m) => status(m);
+  /* playback copies of audio that is no longer in the session or open (C-21); a large scrub mix goes too */
+  function releaseBuffers() {
+    const used = new Set(app.docs);
+    for (const t of app.session.tracks) { if (t.frozen && t.frozen.src) used.add(t.frozen.src); for (const c of t.clips || []) { used.add(c.src); const ps = AS.cstretch.play(c); if (ps) used.add(ps); } }
+    AS.abCache.sweep((o) => used.has(o));
+    if (mixCache.buf && mixCache.buf.length * mixCache.buf.numberOfChannels * 4 > 256 * 1048576) { mixCache.buf = null; mixCache.sig = ''; }
+  }
   function stop(toOrigin) {
     const was = eng.playing; const p = eng.pos();
-    eng.stop(); stopMetro(); app.loopPass = null; shuttleRate = 0;
+    eng.stop(); stopMetro(); app.loopPass = null; shuttleRate = 0; releaseBuffers();
     if (app.recording) app.recDone = finishRecording();
     if (app.mode === 'multi') startIdleMonitor();
     if (was) {
@@ -392,8 +420,9 @@
   // reloads the clip on its timeline. "Save As" still exports a copy.
   async function openExternal({ path: p, name }) {
     try {
-      const r = await window.audioStageExt.read(p); if (!r.ok) throw new Error(r.error);
-      await openFiles([new File([r.data], name, { type: 'audio/wav' })]);
+      const src = await AS.disk.source(p); if (!src) throw new Error('the file was not found');
+      const file = AS.disk.lazyFile(src); file.asPath = ''; // read in pieces; Ctrl+S goes back through extPath, not this path
+      await openFiles([file]);
       const d = app.cur; if (d && d.name === name) { d.extPath = p; d.dirty = false; updateFiles(); UI.toast(`Editing “${name}” for EditorStage — Ctrl+S saves it back to the timeline.`); }
     } catch (e) { UI.toast(`Cannot open “${name}” from EditorStage: ${e.message || e}`, 'error'); }
   }
@@ -539,15 +568,20 @@
   }
   /* audio for scrubbing / shuttling: the file (Waveform) or a cached mixdown of the session (Multitrack), rendered
      again only when the session changed */
-  const mixCache = { sig: '', buf: null, pending: null, pendingSig: '' };
+  const mixCache = { sig: '', buf: null, a: 0, b: 0, pending: null, pendingSig: '' };
   const mixSig = () => JSON.stringify([app.session.tracks, app.session.master], (k, v) => (k === 'src' && v ? v.name + ':' + v.dur + ':' + (v.id || '') : k === 'ch' || k === 'takes' ? undefined : v));
-  function mixBuffer() {
-    const s = app.session, sig = mixSig();
-    if (mixCache.buf && mixCache.sig === sig) return Promise.resolve(mixCache.buf);
-    if (s.duration <= 0) return Promise.resolve(null);
+  /* a long session: only a window of 5 minutes on each side of the position is rendered (mixCache.a .. b on the timeline),
+     again when the position nears its edge */
+  const SCRUB_WIN = 300;
+  const mixFits = (pos, dur) => mixCache.a === 0 && mixCache.b >= dur ? true : pos >= mixCache.a + 10 && pos <= mixCache.b - 10;
+  function mixBuffer(pos) {
+    const s = app.session, sig = mixSig(), dur = s.duration, p = pos === undefined ? app.multiCursor : pos;
+    if (mixCache.buf && mixCache.sig === sig && mixFits(p, dur)) return Promise.resolve(mixCache.buf);
+    if (dur <= 0) return Promise.resolve(null);
+    const long = dur > AS.renderCfg.LONG_S, a = long ? Math.max(0, p - SCRUB_WIN) : 0, b = long ? Math.min(dur, p + SCRUB_WIN) : dur;
     if (!mixCache.pending || mixCache.pendingSig !== sig) {
       eng.init(); status('Preparing the session audio for scrubbing / shuttle…'); mixCache.pendingSig = sig;
-      mixCache.pending = AS.renderMix(s, eng.ctx.sampleRate).then((m) => { if (mixCache.pendingSig === sig) { mixCache.sig = sig; mixCache.buf = eng.toBuffer(m.ch, m.sr); } mixCache.pending = null; return mixCache.buf; }, (e) => { mixCache.pending = null; reportErr(e); return null; });
+      mixCache.pending = AS.renderRange(s, eng.ctx.sampleRate, a, b, null, long ? 0.05 : undefined).then((m) => { if (mixCache.pendingSig === sig) { mixCache.sig = sig; mixCache.a = a; mixCache.b = b; mixCache.buf = eng.toBuffer(m.ch, m.sr); } mixCache.pending = null; return mixCache.buf; }, (e) => { mixCache.pending = null; reportErr(e); return null; });
     }
     return mixCache.pending;
   }
@@ -556,13 +590,14 @@
   const scrubSt = { last: null, gt: 0 };
   async function scrub(pos, mode) {
     if (eng.playing || app.recording) return; eng.init();
-    const buf = mode === 'multi' ? (mixCache.buf && mixCache.sig === mixSig() ? mixCache.buf : (mixBuffer(), null)) : app.cur && app.cur.audioBuffer();
+    const buf = mode === 'multi' ? (mixCache.buf && mixCache.sig === mixSig() && mixFits(pos, app.session.duration) ? mixCache.buf : (mixBuffer(pos), null)) : app.cur && app.cur.audioBuffer();
     if (!buf) return;
+    const base = mode === 'multi' ? mixCache.a : 0;
     const now = performance.now() / 1000, L = scrubSt.last; scrubSt.last = { pos, t: now };
-    if (!L || now - L.t > 0.25) { scrubSt.gt = now; return AS.playx.grain(eng.ctx, eng.master, buf, pos, 1, 0.08); } // a click: one grain
+    if (!L || now - L.t > 0.25) { scrubSt.gt = now; return AS.playx.grain(eng.ctx, eng.master, buf, pos - base, 1, 0.08); } // a click: one grain
     if (now - scrubSt.gt < 0.04) return; // ~25 grains a second
     const rate = AS.playx.scrubRate((pos - L.pos) * buf.sampleRate, now - L.t, buf.sampleRate); if (!rate) return;
-    scrubSt.gt = now; return AS.playx.grain(eng.ctx, eng.master, buf, pos, rate, 0.08);
+    scrubSt.gt = now; return AS.playx.grain(eng.ctx, eng.master, buf, pos - base, rate, 0.08);
   }
   app.scrub = scrub;
   /* Shuttle J / K / L: reverse / stop / forward; again = faster (1, 2, 4, 8×); hold K for half speed */
@@ -576,11 +611,11 @@
     eng.init(); const multiMode = app.mode === 'multi', d = app.cur;
     if (!multiMode && !needDoc()) return 0;
     const pos = eng.playing ? eng.pos() : multiMode ? app.multiCursor : app.playSample(d) / d.sr;
-    const buf = multiMode ? await mixBuffer() : d.audioBuffer(); if (!buf) { UI.toast('Nothing to play.'); return 0; }
+    const buf = multiMode ? await mixBuffer(pos) : d.audioBuffer(); if (!buf) { UI.toast('Nothing to play.'); return 0; }
     if (app.recording) return 0;
-    const t0 = eng.prepare(), src = AS.playx.playRate(eng.ctx, eng.master, buf, rate, Math.max(0, Math.min(buf.duration, pos)), t0);
+    const base = multiMode ? mixCache.a : 0, t0 = eng.prepare(), src = AS.playx.playRate(eng.ctx, eng.master, buf, rate, Math.max(0, Math.min(buf.duration, pos - base)), t0);
     src.onended = () => { if (eng.sources[0] === src) stop(false); };
-    eng.begin([src], t0, pos, rate > 0 ? buf.duration : 0, 0, { rate });
+    eng.begin([src], t0, pos, rate > 0 ? base + buf.duration : base, 0, { rate });
     if (!multiMode) { app.playDoc = d; app.playOrigin = d.sel.a; if (d.hasSel()) d.sel = { a: d.sel.a, b: d.sel.a }; }
     shuttleRate = rate; updatePlayBtn(); status(`Shuttle ${rate < 0 ? '◀ ' : '▶ '}${Math.abs(rate)}×   (J reverse · K stop · L forward)`);
     return rate;
@@ -701,7 +736,7 @@
         for (const f of Object.values(j.files)) {
           const tries = [f.path, xmlDir && xmlDir + '/' + base(f.path || f.name), xmlDir && xmlDir + '/' + f.name].filter(Boolean);
           let got = null;
-          if (window.audioStageMedia) for (const p of tries) { const r = await window.audioStageMedia.read(p); if (r.ok) { got = new File([r.data], base(p)); break; } }
+          if (window.audioStageMedia) for (const p of tries) { const r = await window.audioStageMedia.open(p); if (r.ok) { got = AS.disk.lazyFile(AS.disk.fromInfo(r.path, r.name, r.size)); got.asPath = ''; break; } }
           if (!got && oo.files) got = oo.files.find((x) => x.name.toLowerCase() === base(f.path || f.name).toLowerCase() || x.name.toLowerCase() === f.name.toLowerCase()) || null;
           if (!got) { missing.push(f); continue; }
           const res = await decodeFile(got); srcs[f.id] = AS.makeSource(got.name.replace(/\.\w+$/, ''), res.sr, res.ch);
@@ -1140,6 +1175,11 @@
         target = await AS.disk.chooseSave({ title: 'Export Multitrack Mixdown', name: base + '.' + f.ext, path: app.session.filePath ? AS.disk.join(AS.disk.dirOf(app.session.filePath), base + '.' + f.ext) : '', filters: [{ name: f.label, extensions: [f.ext] }] });
         if (!target) { status('Mixdown not exported.'); return null; }
       }
+      const dur = app.session.duration, long = dur > AS.renderCfg.LONG_S;
+      if (long && target && (f.format === 'wav' || f.format === 'flac')) { // written while it renders: any length, little memory
+        await exportStream(target, f, r.dither); status('Mixdown exported: ' + target); return target;
+      }
+      if (long && (dur * app.session.sr * 8) / 1073741824 > 4) { UI.toast('A session this long is exported as WAV or FLAC, which are written to disk while rendering. ' + f.label + ' would have to hold the whole mix in memory.', 'error'); return null; }
       const m = await UI.busy('Rendering mixdown…', () => AS.renderMix(app.session, app.session.sr));
       if (!target) { await encodeDownload(m.ch, m.sr, base, r.fmt, r.dither); return true; }
       const buf = await encodeBytes(m.ch, m.sr, r.fmt, r.dither);
@@ -1147,6 +1187,18 @@
       status('Mixdown exported: ' + target); return target;
     } catch (e) { reportErr(e); return null; }
   }
+  /* a long mixdown: slices go straight to the file (temporary file, renamed when complete); Cancel keeps nothing */
+  async function exportStream(target, f, dither) {
+    const s = app.session, sr = s.sr, sink = AS.disk.sink(target), ctl = { aborted: false }; let enc = null;
+    try {
+      await UI.busy('Rendering mixdown…', () => AS.renderStream(s, sr, 0, s.duration, null, undefined, async (block, f0, F) => {
+        if (!enc) { enc = f.format === 'wav' ? AS.wav.stream(block.length, sr, f.bits, F, dither) : AS.codec.flacStream(block.length, sr, f.bits, F); await sink.write(enc.head()); }
+        await sink.write(f.format === 'wav' ? enc.samples(block) : await enc.encode(block));
+        UI.busyMsg('Rendering mixdown… ' + Math.round((100 * (f0 + block[0].length)) / F) + ' %');
+      }, { signal: ctl }).then(async () => { await sink.write(f.format === 'wav' ? enc.tail() : enc.finish()); await sink.commit(); }), () => { ctl.aborted = true; });
+    } catch (e) { await sink.abort(); throw e; }
+  }
+  app.exportStream = exportStream;
   /* 5.1: the output device gets 6 channels when it has them; otherwise Web Audio folds 5.1 down to stereo (spec downmix) */
   function setOutChannels() {
     if (!eng.ctx) return; const d = eng.ctx.destination, want = app.mode === 'multi' && app.session.opts.channels === 6 && d.maxChannelCount >= 6 ? 6 : 2;
@@ -1223,6 +1275,7 @@
       const p = file.asPath || (window.audioStageRecent ? window.audioStageRecent.pathOf(file) : '') || '';
       s.filePath = file.asPath || ''; s.fileName = file.name; s.dirty = false; if (!s.filePath && p) s.suggestPath = p; // (a dropped file: Save asks, starting there)
       useSession(s); AS.recent.note('sessions', file);
+      if (s.loadReport && s.loadReport.notes.length) UI.toast('Session opened, but the file was damaged: ' + s.loadReport.notes.join('; ') + '.', 'error'); // (sessionio.js sanitize)
       return true;
     } catch (e) { if (e && e.cancelled) UI.toast('Opening cancelled.'); else UI.toast('Cannot open session: ' + e.message, 'error'); return false; }
   }
@@ -1235,7 +1288,6 @@
   }
   app.updateTitle = updateTitle;
 
-      if (s.loadReport && s.loadReport.notes.length) UI.toast('Session opened, but the file was damaged: ' + s.loadReport.notes.join('; ') + '.', 'error'); // (sessionio.js sanitize)
   /* ================= Multitrack ops ================= */
   function insertDocIntoMulti(d) {
     if (!d) return;
