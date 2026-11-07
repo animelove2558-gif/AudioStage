@@ -11,7 +11,9 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto'), zl
 const SOURCES = {
   python: { version: '3.13.17', url: 'https://www.python.org/ftp/python/3.13.17/python-3.13.17-embed-amd64.zip', sha256: '9e35319bffedab8b36ad44d8f377cb4f1733bcec257a0b6d04d94f01486ddb38', size: 11441267 },
   pip: { version: '26.2.2', url: 'https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl', sha256: 'fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70', size: 1819850 },
-  ffmpeg: { base: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/', checksums: 'checksums.sha256' },
+  // ffmpeg: a dated release and the hash of its file, fixed in this source (checked 2026-11-07 against that release's own
+  // checksums.sha256). Without `file` + `sha256` (the app tests' local server) the checksum list of the release is used.
+  ffmpeg: { base: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-05-12-48/', checksums: 'checksums.sha256', file: 'ffmpeg-n9.0.2-47-gb204e94e90-win64-lgpl-shared-9.0.zip', sha256: 'a6103833b86a94057c9d99cb8211ae7d3742153566cdbaedefeb9c5e36ca2a7c', size: 76633174 },
 };
 
 /* ---------- errors people can read ---------- */
@@ -242,9 +244,8 @@ class Runtimes {
   }
   async installFfmpeg(tmp, staging, say, signal) {
     const S = this.sources.ffmpeg;
-    say('download', 0, 'Looking up the latest LGPL build…');
-    const sums = await downloadText(S.base + S.checksums, { signal });
-    const pick = pickFfmpeg(sums)[0]; if (!pick) throw new Error('No LGPL Windows build was found in the ffmpeg release.');
+    say('download', 0, S.sha256 ? 'Preparing the ffmpeg download…' : 'Looking up the latest LGPL build…');
+    const pick = S.sha256 && S.file ? { name: S.file, sha256: S.sha256 } : pickFfmpeg(await downloadText(S.base + S.checksums, { signal }))[0]; if (!pick) throw new Error('No LGPL Windows build was found in the ffmpeg release.');
     const zip = path.join(tmp, pick.name);
     await this.fetchChecked({ url: S.base + pick.name, sha256: pick.sha256, size: 80e6 }, zip, say, 'download', 0.02, 0.9, signal, 'ffmpeg (LGPL)');
     say('extract', 0.9, 'Unpacking ffmpeg…');
