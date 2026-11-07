@@ -1232,6 +1232,7 @@
   }
   app.updateTitle = updateTitle;
 
+      if (s.loadReport && s.loadReport.notes.length) UI.toast('Session opened, but the file was damaged: ' + s.loadReport.notes.join('; ') + '.', 'error'); // (sessionio.js sanitize)
   /* ================= Multitrack ops ================= */
   function insertDocIntoMulti(d) {
     if (!d) return;
