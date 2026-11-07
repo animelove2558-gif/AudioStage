@@ -1685,7 +1685,7 @@
     try {
       const v = vt.video, sr = 48000, m = await UI.busy('Rendering the mixdown…', () => AS.renderRange(app.session, sr, v.start, v.start + (v.dur || app.session.duration), null, 0));
       const wav = new Uint8Array(await UI.busy('Encoding…', () => AS.jobs.encode(m.ch.map((c) => c.slice()), sr, { format: 'wav', bits: 24 })));
-      const r = await UI.busy('Writing the video (ffmpeg)…', () => api.mux(v.path, wav, o && o.out));
+      const r = await UI.busy('Writing the video (ffmpeg)…', () => api.mux(v.path, wav, o && o.out), () => { if (api.abort) api.abort(); });
       if (!r.ok) throw new Error(r.error); if (!r.path) return null;
       status('Video exported: ' + r.path); UI.toast('Video exported: ' + r.path); return r.path;
     } catch (e) { reportErr(e); return null; }

@@ -110,10 +110,15 @@ ipcMain.handle('vst:process', wrap(async (e, channels, sr, tail) => {
 
 /* ---- Media Browser: list folders and read audio / video files (allow-listed extensions only) ---- */
 const MEDIA_EXT = /\.(wav|wave|mp3|ogg|flac|m4a|aac|opus|aif|aiff|webm|mp4|mov|mkv|m4v)$/i;
-ipcMain.handle('media:roots', wrap(() => {
+/* does this path answer within `ms`? (a disconnected network drive or a sleeping USB disk would block a synchronous check) */
+const reachable = (p, ms) => new Promise((res) => { const t = setTimeout(() => res(false), ms); fs.promises.access(p).then(() => { clearTimeout(t); res(true); }, () => { clearTimeout(t); res(false); }); });
+ipcMain.handle('media:roots', wrap(async () => {
   const roots = [];
   for (const [name, key] of [['Home', 'home'], ['Music', 'music'], ['Documents', 'documents'], ['Desktop', 'desktop'], ['Downloads', 'downloads']]) { try { const p = app.getPath(key); if (fs.existsSync(p)) roots.push({ name, path: p }); } catch (e) { /* folder not available */ } }
-  if (process.platform === 'win32') for (const l of 'CDEFGHIJKLMNOPQRSTUVWXYZ') { const p = l + ':\\'; try { if (fs.existsSync(p)) roots.push({ name: 'Drive ' + l + ':', path: p }); } catch (e) { /* */ } }
+  if (process.platform === 'win32') { // all drive letters at once, each with a time limit
+    const letters = [...'CDEFGHIJKLMNOPQRSTUVWXYZ'], up = await Promise.all(letters.map((l) => reachable(l + ':\\', 1500)));
+    letters.forEach((l, i) => { if (up[i]) roots.push({ name: 'Drive ' + l + ':', path: l + ':\\' }); });
+  }
   else { // Linux / macOS: USB sticks and extra disks are mounted under /media/<user> (udisks), /run/media/<user> or /mnt
     let user = ''; try { user = require('os').userInfo().username; } catch (e) { /* */ }
     for (const [name, p] of [['Removable media', user ? '/media/' + user : ''], ['Removable media', user ? '/run/media/' + user : ''], ['Mounted disks (/mnt)', '/mnt'], ['Volumes', '/Volumes']]) { try { if (p && fs.existsSync(p) && fs.readdirSync(p).length) roots.push({ name, path: p }); } catch (e) { /* not readable */ } }
@@ -121,13 +126,14 @@ ipcMain.handle('media:roots', wrap(() => {
   }
   return { roots };
 }));
-ipcMain.handle('media:list', wrap((e, dir) => {
+ipcMain.handle('media:list', wrap(async (e, dir) => {
   if (typeof dir !== 'string' || !dir) throw new Error('Bad folder.');
   const d = path.resolve(dir), out = [];
-  for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
+  const ents = await fs.promises.readdir(d, { withFileTypes: true });
+  for (const ent of ents.length > 20000 ? ents.slice(0, 20000) : ents) { // (a folder with more entries is cut: the panel stays usable)
     if (ent.name.startsWith('.') || ent.name === '$RECYCLE.BIN' || ent.name === 'System Volume Information') continue;
     const full = path.join(d, ent.name); let size = 0, isDir = ent.isDirectory();
-    if (!isDir) { if (!ent.isFile()) continue; try { size = fs.statSync(full).size; } catch (er) { continue; } }
+    if (!isDir) { if (!ent.isFile()) continue; try { size = (await fs.promises.stat(full)).size; } catch (er) { continue; } }
     out.push({ name: ent.name, path: full, dir: isDir, size });
   }
   out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name, undefined, { numeric: true }) : a.dir ? -1 : 1));
@@ -199,7 +205,9 @@ const video = require('./electron/video');
 let ffmpegInfo; const ffmpeg = () => (ffmpegInfo === undefined ? (ffmpegInfo = video.findFfmpeg({ local: runtimes.ffmpegExe() })) : ffmpegInfo); // (cleared when ffmpeg is installed / removed)
 const VIDEO_EXT = /\.(mp4|mov|mkv|m4v|webm)$/i;
 ipcMain.handle('video:ffmpeg', wrap(() => ({ ffmpeg: ffmpeg() })));
-ipcMain.handle('video:probe', wrap((e, p) => { if (typeof p !== 'string' || !fs.existsSync(p)) throw new Error('File not found.'); const f = ffmpeg(); if (!f) throw new Error('ffmpeg is not installed.'); return { info: video.probe(f.path, p) }; }));
+ipcMain.handle('video:probe', wrap(async (e, p) => { if (typeof p !== 'string' || !fs.existsSync(p)) throw new Error('File not found.'); const f = ffmpeg(); if (!f) throw new Error('ffmpeg is not installed.'); return { info: await video.probeAsync(f.path, p) }; }));
+let muxJob = null; // the export that is running (video:abort stops it)
+ipcMain.handle('video:abort', wrap(() => { const j = muxJob; if (j) { j.cancelled = true; if (j.proc) j.proc.cancel(); } return { aborted: !!j }; }));
 ipcMain.handle('video:mux', wrap(async (e, src, wav, out) => {
   const f = ffmpeg(); if (!f) throw new Error('ffmpeg was not found. Use Help > Check VST / ffmpeg Status… > Install ffmpeg… (or put ffmpeg on PATH).');
   if (typeof src !== 'string' || !VIDEO_EXT.test(src) || !fs.existsSync(src)) throw new Error('The session’s video file was not found.');
@@ -209,7 +217,9 @@ ipcMain.handle('video:mux', wrap(async (e, src, wav, out) => {
     if (r.canceled || !r.filePath) return { path: null };
     out = r.filePath;
   }
-  return { path: await video.mux(f.path, src, wav, out) };
+  const job = { cancelled: false, proc: null }; muxJob = job;
+  try { return { path: await video.mux(f.path, src, wav, out, undefined, { cancelled: () => job.cancelled, onProcess: (pr) => { job.proc = pr; } }) }; }
+  finally { if (muxJob === job) muxJob = null; }
 }));
 
 /* ---- Exports of several files at once (Export Ranges, CD Layout, interchange XML + media): the user picks a folder,
@@ -439,6 +449,9 @@ function createWindow() {
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(permission === 'media' || permission === 'audioCapture'));
   session.defaultSession.on('will-download', (e, item) => { if (saveDir && fs.existsSync(saveDir)) item.setSaveDialogOptions({ defaultPath: path.join(saveDir, item.getFilename()) }); });
+  setTimeout(() => { // leftovers of a hard crash (not in the way of start-up)
+    try { const sw = require('./electron/sweep'), a = sw.sweepTmp(storeRoot()), b = sw.sweepVstTemp(require('os').tmpdir()); if (a || b) log.write('info', `Cleaned up after an earlier crash: ${a} temporary file(s), ${b} plugin render folder(s).`); } catch (e) { /* */ }
+  }, 3000);
   createWindow();
   queueExt(extFromArgv(process.argv));
   queueOpen(filesFromArgv(process.argv));

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('audioStageVideo', {
   ffmpeg: () => ipcRenderer.invoke('video:ffmpeg'),
   probe: (p) => ipcRenderer.invoke('video:probe', p),
   mux: (src, wav, out) => ipcRenderer.invoke('video:mux', src, wav, out),
+  abort: () => ipcRenderer.invoke('video:abort'),
 });
 
 // Help > Check for Updates…: check / download / install only when the person says so (electron/updater.js)
