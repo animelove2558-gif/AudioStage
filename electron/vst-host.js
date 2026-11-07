@@ -53,20 +53,53 @@ class VstHost {
     const info = { error: lastErr || 'Python was not found.' }; this.noPython = { at: Date.now(), info };
     return info;
   }
+  /* the same without blocking: one child process at a time, on the event loop. Concurrent callers share the run. */
+  detectAsync() {
+    if (this.probe) return Promise.resolve(this.detectPython());
+    if (this.pythonInfo) return Promise.resolve(this.pythonInfo);
+    if (this.noPython && Date.now() - this.noPython.at < 60000) return Promise.resolve(this.noPython.info);
+    if (this.detecting) return this.detecting;
+    const run = (cmd, pre, ms) => new Promise((res) => {
+      let out = '', err = '', done = false, p;
+      const end = (r) => { if (done) return; done = true; clearTimeout(t); res(r); };
+      const t = setTimeout(() => { try { if (p) p.kill(); } catch (e) { /* */ } end({ status: null, stdout: out, stderr: err, error: new Error('timed out') }); }, ms);
+      try { p = spawn(cmd, [...pre, '-I', '-c', 'import pedalboard,numpy;print(pedalboard.__version__)'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { end({ status: null, stdout: '', stderr: '', error: e }); return; }
+      p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8'); p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
+      p.on('error', (e) => end({ status: null, stdout: out, stderr: err, error: e })); p.on('close', (code) => end({ status: code, stdout: out, stderr: err }));
+    });
+    return (this.detecting = (async () => {
+      let lastErr = '';
+      try {
+        for (const { cmd, pre, source } of this.candidates()) {
+          const r = await run(cmd, pre, source === 'system' ? 10000 : 30000);
+          if (r.status === 0) return (this.pythonInfo = { cmd, pre, source, pedalboard: String(r.stdout).trim() });
+          if (r.error) { if (source !== 'system') lastErr = `${cmd}: ${r.error.code || r.error.message}`; continue; }
+          lastErr = /No module named/.test(r.stderr || '') ? 'The plugin-host packages (pedalboard) are not installed.' : (r.stderr || '').trim().split('\n').pop() || lastErr;
+        }
+        const info = { error: lastErr || 'Python was not found.' }; this.noPython = { at: Date.now(), info };
+        return info;
+      } finally { this.detecting = null; }
+    })());
+  }
   /* forget the detected Python and stop the helper: the next request uses a runtime that was just installed / removed */
   reset() { this.shutdown(); this.pythonInfo = null; this.noPython = null; }
   hint() { return hintFor({ platform: process.platform, arch: process.arch, packaged: this.packaged }); }
+  /* never blocks: while the search runs in the background it says checking: true (the preload asks again until it is done) */
   status() {
-    const p = this.detectPython(), canInstall = process.platform === 'win32' && process.arch === 'x64';
+    const canInstall = process.platform === 'win32' && process.arch === 'x64', known = this.probe || this.pythonInfo || (this.noPython && Date.now() - this.noPython.at < 60000);
+    if (!known) { this.detectAsync(); return { available: false, checking: true, error: 'Looking for Python…', hint: this.hint(), canInstall }; }
+    const p = this.detectPython();
     if (p.error) return { available: false, error: p.error, hint: this.hint(), canInstall };
     return { available: true, python: p.cmd, source: p.source, pedalboard: p.pedalboard, platform: process.platform, canInstall };
   }
+
+  async statusAsync() { await this.detectAsync(); return this.status(); }
 
   ensureChild() {
     if (this.child) return;
     const p = this.detectPython(); if (p.error) throw new Error(p.error + ' ' + this.hint());
     fs.mkdirSync(this.tmp, { recursive: true });
-    const child = spawn(p.cmd, [...p.pre, '-I', '-u', HOST_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    const child = this.spawnFor ? this.spawnFor() : spawn(p.cmd, [...p.pre, '-I', '-u', HOST_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
     this.child = child; this.buf = '';
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => {
@@ -91,11 +124,19 @@ class VstHost {
     // exception; the pending requests fail with the same message as an unexpected exit
     child.stdin.on('error', (e) => dead(`The plugin host stopped unexpectedly (${e.code || e.message}). The plugin probably crashed — reload it.`));
   }
-  request(cmd, args = {}, timeoutMs = 60000) {
+  /* the helper is stuck in an old job and every later request would queue behind it: end it; the next request starts a new one */
+  abortChild(why) {
+    const c = this.child; this.child = null;
+    for (const pr of this.pending.values()) { clearTimeout(pr.timer); pr.rej(new Error(why)); }
+    this.pending.clear();
+    if (c) { try { c.kill(); } catch (e) { /* */ } }
+  }
+  async request(cmd, args = {}, timeoutMs = 60000) {
+    if (!this.child) await this.detectAsync(); // (the search for Python never blocks the main process)
     return new Promise((res, rej) => {
       try { this.ensureChild(); } catch (e) { rej(e); return; }
       const id = this.seq++;
-      const timer = setTimeout(() => { this.pending.delete(id); rej(new Error('The plugin host did not answer in time.')); }, timeoutMs);
+      const timer = setTimeout(() => { this.pending.delete(id); rej(new Error('The plugin host did not answer in time, so it was restarted. Load the plugin again.')); this.abortChild('The plugin host was restarted because an earlier request did not answer in time. Load the plugin again.'); }, timeoutMs);
       this.pending.set(id, { res, rej, timer });
       const fail = (e) => { if (!this.pending.has(id)) return; this.pending.delete(id); clearTimeout(timer); rej(new Error(`The plugin host stopped unexpectedly (${(e && (e.code || e.message)) || 'write failed'}). The plugin probably crashed — reload it.`)); };
       const stdin = this.child && this.child.stdin;
@@ -128,14 +169,21 @@ class VstHost {
     const id = Date.now() + '-' + Math.random().toString(16).slice(2, 8);
     fs.mkdirSync(this.tmp, { recursive: true });
     const inPath = path.join(this.tmp, id + '.in.f32'), outPath = path.join(this.tmp, id + '.out.f32');
-    const raw = Buffer.alloc(ch * n * 4);
-    channels.forEach((c, i) => Buffer.from(c.buffer, c.byteOffset, c.byteLength).copy(raw, i * n * 4));
-    fs.writeFileSync(inPath, raw);
+    const PIECE = 16 * 1024 * 1024;
+    /* in pieces on the event loop, straight from / into the arrays: no whole-clip Buffer, no frozen window */
+    const fhIn = await fs.promises.open(inPath, 'w');
+    try { for (const c of channels) { const v = Buffer.from(c.buffer, c.byteOffset, c.byteLength); for (let o = 0; o < v.length;) { const { bytesWritten } = await fhIn.write(v, o, Math.min(PIECE, v.length - o)); o += bytesWritten; } } }
+    finally { await fhIn.close(); }
     try {
       const r = await this.request('process', { inPath, outPath, ch, n, sr, tailSeconds: tailSeconds || 0 }, 15 * 60 * 1000);
-      const data = fs.readFileSync(outPath), total = r.n;
-      const out = [];
-      for (let c = 0; c < r.ch; c++) { const a = new Float32Array(total); Buffer.from(a.buffer).fill(0); data.copy(Buffer.from(a.buffer), 0, c * total * 4, (c + 1) * total * 4); out.push(a); }
+      const total = r.n, out = [], fhOut = await fs.promises.open(outPath, 'r');
+      try {
+        for (let c = 0; c < r.ch; c++) {
+          const a = new Float32Array(total), v = Buffer.from(a.buffer); let pos = c * total * 4;
+          for (let o = 0; o < v.length;) { const { bytesRead } = await fhOut.read(v, o, Math.min(PIECE, v.length - o), pos); if (!bytesRead) break; o += bytesRead; pos += bytesRead; }
+          out.push(a);
+        }
+      } finally { await fhOut.close(); }
       return out;
     } finally { for (const p of [inPath, outPath]) fs.rm(p, { force: true }, () => {}); }
   }
@@ -156,7 +204,7 @@ function writeScanCache(f, c) { require('./savefile').writeFileAtomic(f, JSON.st
 async function verifyPlugins(host, list, o) {
   const cache = readScanCache(o.cacheFile), P = cache.plugins, retry = new Set(o.retry || []), out = [];
   for (const [k, v] of Object.entries(P)) if (v.status === 'scanning') P[k] = { ...v, status: 'crashed', reason: 'AudioStage closed while this plugin was loading — the plugin probably crashed it.' };
-  const py = host.detectPython(); if (py.error) throw new Error(py.error + ' ' + host.hint());
+  const py = host.detectAsync ? await host.detectAsync() : host.detectPython(); if (py.error) throw new Error(py.error + ' ' + host.hint());
   for (let i = 0; i < list.length; i++) {
     const p = list[i]; let mtime = 0; try { mtime = Math.round(fs.statSync(p.path).mtimeMs); } catch (e) { /* gone */ }
     const c0 = P[p.path];

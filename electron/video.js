@@ -37,14 +37,6 @@ function probeAsync(ff, file, timeoutMs = 20000) {
   });
 }
 function probe(ff, file) { const r = spawnSync(ff, ['-hide_banner', '-i', file], { encoding: 'utf8', timeout: 20000, windowsHide: true }); return parseProbe(r.stderr || ''); }
-function probeAsync(ff, file) {
-  return new Promise((res) => {
-    let err = '', p, done = false; const end = () => { if (done) return; done = true; clearTimeout(t); res(parseProbe(err)); };
-    const t = setTimeout(() => { try { p.kill(); } catch (e) { /* */ } end(); }, 20000);
-    try { p = spawn(ff, ['-hide_banner', '-i', file], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] }); } catch (e) { end(); return; }
-    p.stderr.setEncoding('utf8'); p.stderr.on('data', (d) => { if (err.length < 200000) err += d; }); p.on('error', end); p.on('close', end);
-  });
-}
 /* the video stream is copied untouched; the new audio is AAC, padded with silence and cut to the video's length.
    duration (s, from probe): an explicit -t, because "-af apad -shortest" alone lets some ffmpeg versions run on past
    the end of a copied video stream by a fraction of a second */
@@ -74,4 +66,4 @@ function mux(ff, video, wavBytes, out, kbps, o = {}) {
     });
   });
 }
-module.exports = { findFfmpeg, ffmpegCandidates, parseProbe, probe, probeAsync, muxArgs, mux };
+module.exports = { findFfmpeg, programExists, ffmpegCandidates, parseProbe, probe, probeAsync, muxArgs, mux };

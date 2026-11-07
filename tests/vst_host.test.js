@@ -7,7 +7,7 @@ const path = require('path');
 const { VstHost } = require(path.join(__dirname, '../electron/vst-host.js'));
 
 (async () => {
-  const h = new VstHost(), st = h.status();
+  const h = new VstHost(), st = await h.statusAsync();
   if (!st.available) { console.log('SKIP  plugin host not installed:', st.error); return; }
   const plug = process.env.VST3_TEST_PLUGIN;
   if (!plug) { console.log('SKIP  set VST3_TEST_PLUGIN to an effect plugin (.vst3) to run the host tests'); h.shutdown(); return; }

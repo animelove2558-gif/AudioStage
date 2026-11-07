@@ -9,6 +9,7 @@ Audio is exchanged through raw little-endian float32 files laid out as [channels
 """
 import json
 import os
+import queue
 import sys
 import threading
 import traceback
@@ -28,9 +29,13 @@ HIDDEN_PARAMS = {"buffer_size_frames", "sample_rate_frames"}  # host-provided, n
 state = {"plugin": None, "path": None}
 
 
+_reply_lock = threading.Lock()
+
+
 def reply(obj):
-    _proto.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    _proto.flush()
+    with _reply_lock:
+        _proto.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        _proto.flush()
 
 
 def resolve_binary(path):
@@ -179,20 +184,73 @@ def handle(req):
     raise ValueError(f"unknown command {cmd!r}")
 
 
-def main():
+# Requests come in on a reader thread. JUCE needs plugins loaded and their editor shown on the main thread, so the main
+# thread runs them. show_editor() blocks it for as long as the window is open, so meanwhile a second thread answers what
+# does not change which plugin is loaded (a plugin window left open must not freeze the rack); loading another plugin or
+# opening a second window is refused with a clear message until the window is closed.
+_requests = queue.Queue()
+_editor_open = threading.Event()
+_run_lock = threading.Lock()
+ALLOWED_WHILE_EDITOR = {"ping", "params", "setParam", "getState", "setState", "reset", "process"}
+
+
+def run_request(line):
+    rid = None
+    try:
+        req = json.loads(line)
+        rid = req.get("id")
+        if req.get("cmd") == "editor":
+            _editor_open.set()
+            try:
+                res = handle(req)
+            finally:
+                _editor_open.clear()
+        else:
+            if _editor_open.is_set() and threading.current_thread() is not threading.main_thread() and req.get("cmd") not in ALLOWED_WHILE_EDITOR:
+                raise RuntimeError("Close the plugin window first.")
+            with _run_lock:
+                res = handle(req)
+        reply({"id": rid, "ok": True, **res})
+    except Exception as e:  # noqa: BLE001 - report everything back to the app
+        sys.stderr.write(traceback.format_exc())
+        reply({"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}"})
+
+
+def read_stdin():
     for line in sys.stdin:
         line = line.strip()
-        if not line:
-            continue
-        rid = None
+        if line:
+            _requests.put(line)
+    _requests.put(None)  # the app closed the pipe
+
+
+def while_editor():
+    while True:
+        _editor_open.wait()
         try:
-            req = json.loads(line)
-            rid = req.get("id")
-            res = handle(req)
-            reply({"id": rid, "ok": True, **res})
-        except Exception as e:  # noqa: BLE001 - report everything back to the app
-            sys.stderr.write(traceback.format_exc())
-            reply({"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}"})
+            line = _requests.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        if line is None:
+            os._exit(0)  # the app is gone: a window left open must not keep this process alive
+        run_request(line)
+
+
+def main():
+    threading.Thread(target=read_stdin, daemon=True).start()
+    threading.Thread(target=while_editor, daemon=True).start()
+    if os.environ.get("AUDIOSTAGE_VST_FAKE_PLUGIN"):  # tests/vst_helper.test.js: no real plugin needed for the threading
+        class Fake:
+            parameters = {}
+
+            def show_editor(self, ev):
+                ev.wait()
+        state["plugin"], state["path"] = Fake(), "fake"
+    while True:
+        line = _requests.get()
+        if line is None:
+            break
+        run_request(line)
 
 
 if __name__ == "__main__":
