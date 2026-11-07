@@ -36,6 +36,7 @@
       const o = m.opts;
       if (o.format === 'mp3') { if (typeof lamejs === 'undefined') await loadScript('vendor/lame.min.js'); return AS.codec.encodeMp3(m.ch, m.sr, o.kbps, AS.dsp.convertRate); }
       if (o.format === 'flac') return AS.codec.encodeFlac(m.ch, m.sr, o.bits === 24 ? 24 : 16);
+      if (o.format === 'aiff') return AS.aiff.encodeAiff(m.ch, m.sr, o.bits, o.dither);
       return AS.wav.encodeWav(m.ch, m.sr, o.bits, o.dither, o);
     }
     throw new Error('unknown job');

@@ -1,5 +1,5 @@
 /* Background worker: effects, generators, spectral edits and file encoding. */
-importScripts('dsp.js', 'wav.js', 'effects.js', 'flac.js');
+importScripts('dsp.js', 'wav.js', 'aiff.js', 'effects.js', 'flac.js');
 const AS = self.AS;
 let lameLoaded = false;
 
@@ -26,6 +26,7 @@ self.onmessage = (e) => {
         if (!lameLoaded) { importScripts('../vendor/lame.min.js'); lameLoaded = true; }
         out = AS.codec.encodeMp3(m.ch, m.sr, o.kbps, AS.dsp.convertRate);
       } else if (o.format === 'flac') out = AS.codec.encodeFlac(m.ch, m.sr, o.bits === 24 ? 24 : 16);
+      else if (o.format === 'aiff') out = AS.aiff.encodeAiff(m.ch, m.sr, o.bits, o.dither);
       else out = AS.wav.encodeWav(m.ch, m.sr, o.bits, o.dither, o);
       transfer = [out];
     }
