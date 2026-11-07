@@ -102,6 +102,9 @@
           nd.meta = AS.tags.clean({ title: (res.cart && res.cart.title) || (res.bext && res.bext.description) || '', artist: (res.cart && res.cart.artist) || '', ...(res.tags || {}) }); // kept, so saving again keeps the tags
         }, f.lazy ? () => { ctl.aborted = true; stopAll = true; } : undefined);
         AS.recent.note('files', f); // File > Open Recent
+          // the browser's audio engine cannot play or draw these (AudioBuffer limits): say so now, not with an error on every frame
+          if (!(res.sr >= 3000 && res.sr <= 768000)) throw new Error(`the sample rate ${res.sr} Hz is not supported (3000 to 768000 Hz)`);
+          if (!res.ch.length || res.ch.length > 32) throw new Error(`${res.ch.length} channels are not supported (1 to 32)`);
       } catch (e) { if (e && e.cancelled) { UI.toast('Opening cancelled.'); stopAll = true; } else UI.toast(`Cannot open “${f.name}”: ${e.message || 'unsupported format'}`, 'error'); }
     }
     if (app.mode === 'multi') setMode('wave');

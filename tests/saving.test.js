@@ -132,6 +132,17 @@ ok('whole-file edits keep full copies, but only within the byte budget: oldest s
   } finally { AS.Doc.undoBudget = old; AS.Doc.onTrim = null; }
   assert(AS.Doc.undoBudget() <= 1.5 * 1024 ** 3);
 });
+ok('the undo budget is shared by all open files: the file used least recently loses its steps first', () => {
+  const N = 50000, per = N * 4, old = AS.Doc.undoBudget, a = new AS.Doc('a.wav', sr, [tone(100, N)]), b = new AS.Doc('b.wav', sr, [tone(200, N)]);
+  AS.Doc.undoBudget = () => 5.5 * per;
+  try {
+    for (let k = 0; k < 3; k++) edit(a, 0, N, k / 10);
+    const aSteps = a.undoStack.length;
+    for (let k = 0; k < 6; k++) edit(b, 0, N, k / 10);
+    assert(a.undoBytes() + b.undoBytes() <= 5.5 * per, 'total within budget: ' + (a.undoBytes() + b.undoBytes()) / per);
+    assert(a.undoStack.length < aSteps, 'the older file lost steps: ' + a.undoStack.length); assert(b.undoStack.length >= 2, 'the file being edited keeps its steps');
+  } finally { AS.Doc.undoBudget = old; AS.Doc.onTrim = null; }
+});
 
 okAsync('autosave audio is written and read in pieces (several pieces of 1 M frames) and comes back bit-exact', async () => {
   const A = AS.autosave, st = AS.store.create(AS.store.memoryBackend()), s = new AS.Session(), N = 2600000;

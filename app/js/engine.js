@@ -34,7 +34,16 @@
       node.port.onmessage = (e) => { const d = e.data; if (d.ch) { if (handle.startTime === null) handle.startTime = d.startTime; if (store) d.ch.forEach((c, i) => chunks[i].push(c)); if (onChunk) onChunk(d); } if (d.done && finish) finish(); };
       const join = (list) => { const o = new Float32Array(list.reduce((a, b) => a + b.length, 0)); let p = 0; for (const b of list) { o.set(b, p); p += b.length; } return o; };
       return Object.assign(handle, {
-        stop: () => new Promise((resolve) => { finish = () => { try { node.disconnect(); sink.disconnect(); } catch (er) { /* */ } resolve(chunks.map(join)); }; node.port.postMessage({ cmd: 'stop' }); }),
+        // The worklet answers "done" from the audio thread. If the context is closed / suspended (device lost) or the processor
+        // died, that never comes: after 3 s the chunks collected so far are returned, so Stop always completes.
+        stop: () => new Promise((resolve) => {
+          let timer = null, ended = false;
+          finish = () => { if (ended) return; ended = true; clearTimeout(timer); try { node.disconnect(); sink.disconnect(); } catch (er) { /* */ } resolve(chunks.map(join)); };
+          node.onprocessorerror = () => finish();
+          if (ctx.state !== 'running') { finish(); return; }
+          timer = setTimeout(() => finish(), 3000);
+          try { node.port.postMessage({ cmd: 'stop' }); } catch (er) { finish(); }
+        }),
       });
     }
     /* live tap of what the speakers get (the master output) for meters: onChunk(channels) every ~85 ms; returns
@@ -108,7 +117,8 @@
        of every recorded sample is known (startTime) — the caller places it on the timeline from that.
        opts.input: record any AudioNode instead of the audio input (latency test, tests); opts.onChunk({peak}) */
     async startRecord(opts) {
-      const o = opts || {}; this.init(); await this.wl;
+      const o = opts || {}; this.init();
+      if ((await this.wl) === false) throw new Error('The recorder could not be loaded (audio worklet failed). Restart AudioStage and try again.');
       const src = o.input || (await this.openInput()), ctx = this.ctx, an = ctx.createAnalyser();
       an.fftSize = 1024;
       const rec = this.recorder(2, o.onChunk);
@@ -160,10 +170,16 @@
        step is kept), and the app is told once (Doc.onTrim) */
     undoBytes() { let n = 0; const seen = new Set(this.ch); for (const s of [...this.undoStack, ...this.redoStack]) n += snapBytes(s, seen); return n; }
     trimUndo() {
-      let dropped = 0; const budget = Doc.undoBudget();
-      while (this.undoStack.length > 1 && this.undoBytes() > budget) { this.undoStack.shift(); dropped++; }
-      if (dropped && Doc.onTrim) Doc.onTrim(this, dropped);
-      return dropped;
+      this.touched = ++Doc.tick; Doc.live = Doc.live.filter((r) => r.deref()); if (!Doc.live.some((r) => r.deref() === this)) Doc.live.push(new WeakRef(this));
+      const docs = Doc.live.map((r) => r.deref()).filter(Boolean), budget = Doc.undoBudget(), lost = new Map();
+      let total = docs.reduce((n, d) => n + d.undoBytes(), 0);
+      while (total > budget) {
+        const v = docs.filter((d) => d.undoStack.length > (d === this ? 1 : 0)).sort((x, y) => (x.touched || 0) - (y.touched || 0))[0];
+        if (!v) break;
+        v.undoStack.shift(); lost.set(v, (lost.get(v) || 0) + 1); total = docs.reduce((n, d) => n + d.undoBytes(), 0);
+      }
+      for (const [d, n] of lost) if (Doc.onTrim) Doc.onTrim(d, n);
+      return lost.get(this) || 0;
     }
     clampSel() { const L = this.len; this.sel.a = D.clamp(this.sel.a, 0, L); this.sel.b = D.clamp(this.sel.b, this.sel.a, L); }
     /* every marker gets a stable id (markers read from WAV cue points have none) */
@@ -213,7 +229,7 @@
     return n;
   }
   Doc.undoBudget = () => { const gb = 1024 * 1024 * 1024, mem = (root.navigator && root.navigator.deviceMemory) || 4; return Math.min(1.5 * gb, (mem * gb) / 4); };
-  Doc.onTrim = null;
+  Doc.onTrim = null; Doc.live = []; Doc.tick = 0; // (the open files that have undo steps, for the shared budget)
   AS.undoDiff = { toDiff, fromDiff, snapBytes };
 
   class Peaks {
@@ -248,4 +264,6 @@
   AS.Doc = Doc; AS.Peaks = Peaks;
 })(window);
 
+    /* One budget for all open files together: when the total is over it, the oldest step of the file used least recently
+       goes first (this file keeps at least its last step). Returns how many steps this file lost. */
 
