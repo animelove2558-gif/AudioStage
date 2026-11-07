@@ -3,7 +3,7 @@
   'use strict';
   const AS = window.AS, D = AS.dsp, E = AS.effects, UI = AS.ui, eng = AS.engine, fmtTime = AS.fmtTime;
   const $ = (s) => document.querySelector(s);
-  const TF = ['time', 'samples', 'smpte', 'bars']; let tfi = 0; // time display formats (declared first: the views use them while drawing)
+  const TF = ['time', 'samples', 'smpte', 'bars', 'feet']; let tfi = 0; // time display formats (declared first: the views use them while drawing)
 
   const app = {
     docs: [], cur: null, mode: 'wave', specMode: false, session: new AS.Session(), selTrack: null, loop: false,
@@ -1754,7 +1754,8 @@
   function fmtDisp(sec) {
     const sr = (app.cur && app.cur.sr) || 44100, f = TF[tfi];
     if (f === 'samples') return String(Math.round(sec * sr));
-    if (f === 'smpte') { const fr = Math.floor((sec % 1) * 30), t = Math.floor(sec); return [Math.floor(t / 3600), Math.floor((t % 3600) / 60) % 60, t % 60].map((x) => String(x).padStart(2, '0')).join(':') + ':' + String(fr).padStart(2, '0'); }
+    if (f === 'smpte') return AS.timecode.fmt(sec, AS.prefs.get('display.tcRate')); // all frame rates, drop-frame (timecode.js)
+    if (f === 'feet') return AS.timecode.feetFrames(sec);
     if (f === 'bars') return AS.tempo.fmt(sec, app.tempo()); // bar | beat | tick at the session / file tempo
     return fmtTime(sec);
   }
@@ -2007,7 +2008,8 @@
     { id: 'mt.overlap', tab: 'Multitrack', label: 'Overlapping clips', type: 'select', options: [['overlap', 'Overlap (crossfade)'], ['overwrite', 'Overwrite'], ['ripple', 'Insert (ripple)']], dflt: 'overlap' },
     { id: 'mt.snapGrid', tab: 'Multitrack', label: 'Snap to grid', type: 'select', options: [['off', 'Off'], ...AS.tempo.DIVS], dflt: 'off' },
     { id: 'mt.trackVol', tab: 'Multitrack', label: 'New track volume', type: 'range', min: -40, max: 12, step: 0.5, unit: 'dB', dflt: 0, note: 'These are the settings of <b>new</b> sessions and tracks; the Multitrack menu changes the open session.' },
-    { id: 'display.timeFmt', tab: 'Display', label: 'Time display', type: 'select', options: [['time', 'Decimal (m:ss.000)'], ['samples', 'Samples'], ['smpte', 'SMPTE timecode'], ['bars', 'Bars:Beats']], dflt: 'time', tip: 'View > Cycle Time Display Format changes it too' },
+    { id: 'display.timeFmt', tab: 'Display', label: 'Time display', type: 'select', options: [['time', 'Decimal (m:ss.000)'], ['samples', 'Samples'], ['smpte', 'SMPTE timecode'], ['bars', 'Bars:Beats'], ['feet', 'Feet + Frames (35 mm)']], dflt: 'time', tip: 'View > Cycle Time Display Format changes it too' },
+    { id: 'display.tcRate', tab: 'Display', label: 'Timecode frame rate', type: 'select', options: AS.timecode.options(), dflt: '30', tip: 'Used by the SMPTE timecode display; the 29.97 and 59.94 drop-frame rates keep the clock time' },
     { id: 'display.specFft', tab: 'Display', label: 'Spectral: FFT size', type: 'select', options: AS.spectral.FFTS.map((n) => [n, String(n)]), dflt: AS.spectral.DEFAULTS.fft, ...SPv('fft') },
     { id: 'display.specWin', tab: 'Display', label: 'Spectral: window', type: 'select', options: Object.entries(D.WINDOWS).map(([k, v]) => [k, typeof v === 'string' ? v : k]), dflt: AS.spectral.DEFAULTS.win, ...SPv('win') },
     { id: 'display.specMin', tab: 'Display', label: 'Spectral: range floor', type: 'range', min: -160, max: -40, step: 1, unit: 'dB', dflt: AS.spectral.DEFAULTS.dbMin, ...SPv('dbMin') },
@@ -2033,7 +2035,7 @@
   app.session = newSession(); multi.s = app.session; multi.rebuildHeads();
   tfi = Math.max(0, TF.indexOf(P.get('display.timeFmt')));
   P.onChange((id, v) => {
-    if (id === 'display.timeFmt') { tfi = Math.max(0, TF.indexOf(v)); lastTime = ''; updateInfo(); wave.draw(); multi.draw(); }
+    if (id === 'display.timeFmt' || id === 'display.tcRate') { tfi = Math.max(0, TF.indexOf(id === 'display.timeFmt' ? v : P.get('display.timeFmt'))); lastTime = ''; updateInfo(); wave.draw(); multi.draw(); }
     else if (id.startsWith('display.spec')) { wave.specCache = null; wave.draw(); }
     else if (id === 'files.saveDir' && window.audioStageFiles) window.audioStageFiles.setSaveDir(v);
   });
