@@ -472,6 +472,21 @@
       const d = app.cur, cb = app.clipboard, ins = D.matchChannels(D.convertRate(cb.ch, cb.sr, d.sr), d.ch.length), a = d.sel.a, b = d.sel.b;
       commit(d, D.spliceCh(d.ch, a, b, ins), 'Paste', { a, b: a + ins[0].length });
     },
+    /* Edit > Insert Silence…: at the start of the selection (or the cursor), later audio moves back */
+    'edit.insertsilence': async () => {
+      if (app.mode === 'multi' || !needDoc()) return; const d = app.cur;
+      const r = await UI.dialog({ title: 'Insert Silence', okLabel: 'Insert', fields: [{ id: 'sec', label: 'Length', type: 'range', min: 0.01, max: 60, step: 0.01, value: 1, unit: 's' }] }); if (!r) return;
+      const n = Math.max(1, Math.round(+r.sec * d.sr)), a = d.sel.a, sil = d.ch.map(() => new Float32Array(n));
+      commit(d, D.spliceCh(d.ch, a, a, sil), 'Insert Silence', { a, b: a + n });
+    },
+    /* Edit > Repeat Selection…: the selection copied N more times right after itself */
+    'edit.repeatsel': async () => {
+      if (app.mode === 'multi' || !needDoc()) return; const d = app.cur; if (!d.hasSel()) { UI.toast('Select the part to repeat first.'); return; }
+      const r = await UI.dialog({ title: 'Repeat Selection', okLabel: 'Repeat', fields: [{ id: 'n', label: 'Extra copies', type: 'range', min: 1, max: 32, step: 1, value: 1 }] }); if (!r) return;
+      const [a, b] = d.range(), part = D.sliceCh(d.ch, a, b), k = Math.max(1, Math.round(+r.n)), len = b - a;
+      const rep = part.map((c) => { const o = new Float32Array(len * k); for (let i = 0; i < k; i++) o.set(c, i * len); return o; });
+      commit(d, D.spliceCh(d.ch, b, b, rep), 'Repeat Selection', { a, b: b + len * k });
+    },
     'edit.mixpaste': () => {
       if (!needDoc()) return; if (!app.clipboard) { UI.toast('Clipboard is empty.'); return; }
       const d = app.cur, cb = app.clipboard, ins = D.matchChannels(D.convertRate(cb.ch, cb.sr, d.sr), d.ch.length), a = d.sel.a, n = ins[0].length, newLen = Math.max(d.len, a + n);
@@ -2093,7 +2108,7 @@
       { label: 'Close', id: 'file.close', shortcut: 'Ctrl+W' }, { label: 'Close All', id: 'file.closeall' }, '-', { label: 'Exit', id: 'file.exit' }] },
     { label: 'Edit', items: [
       { label: 'Undo', id: 'edit.undo', shortcut: 'Ctrl+Z' }, { label: 'Redo', id: 'edit.redo', shortcut: 'Ctrl+Y' }, '-',
-      { label: 'Cut', id: 'edit.cut', shortcut: 'Ctrl+X' }, { label: 'Copy', id: 'edit.copy', shortcut: 'Ctrl+C' }, { label: 'Paste', id: 'edit.paste', shortcut: 'Ctrl+V' }, { label: 'Mix Paste', id: 'edit.mixpaste', shortcut: 'Ctrl+Shift+V' },
+      { label: 'Cut', id: 'edit.cut', shortcut: 'Ctrl+X' }, { label: 'Copy', id: 'edit.copy', shortcut: 'Ctrl+C' }, { label: 'Paste', id: 'edit.paste', shortcut: 'Ctrl+V' }, { label: 'Mix Paste', id: 'edit.mixpaste', shortcut: 'Ctrl+Shift+V' }, { label: 'Insert Silence…', id: 'edit.insertsilence' }, { label: 'Repeat Selection…', id: 'edit.repeatsel' },
       { label: 'Copy to New', id: 'edit.copynew', shortcut: 'Ctrl+Alt+C' }, { label: 'Paste to New', id: 'edit.pastenew', shortcut: 'Ctrl+Alt+V' }, { label: 'Delete', id: 'edit.delete', shortcut: 'Delete' }, { label: 'Crop to Selection', id: 'edit.crop', shortcut: 'Ctrl+T' }, { label: 'Trim Leading/Trailing Silence', id: 'edit.trimsilence' }, '-',
       { label: 'Select All', id: 'edit.selall', shortcut: 'Ctrl+A' }, { label: 'Select None', id: 'edit.selnone', shortcut: 'Ctrl+Shift+A' }, { label: 'Select Visible Range', id: 'edit.selview' }, '-',
       { label: 'Snap to Zero Crossings', id: 'edit.zerosnap', checked: () => EDS.zeroSnap },
