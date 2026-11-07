@@ -86,7 +86,7 @@
     let res = null, tags = null;
     try { tags = AS.tags.read(new Uint8Array(buf)); } catch (e) { /* no tags */ } // before decoding, which empties buf
     if (/\.(wav|wave)$/i.test(f.name)) { try { res = AS.wav.decodeWav(buf); } catch (e) { res = null; } }
-    else if (/.aiff?$/i.test(f.name)) { try { res = AS.aiff.decodeAiff(buf); } catch (e) { res = null; } } // (the system decoder does not read AIFF)
+    else if (/\.aiff?$/i.test(f.name)) { try { res = AS.aiff.decodeAiff(buf); } catch (e) { res = null; } } // (the system decoder does not read AIFF)
     if (!res) res = await AS.decode.audio(keep ? buf.slice(0) : buf); // at the file's own rate, no output device needed
     res.tags = tags;
     if (keep) res.buf = buf;
