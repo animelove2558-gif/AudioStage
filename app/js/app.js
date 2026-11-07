@@ -2164,8 +2164,9 @@
     for (const db of [-48, -36, -24, -12, -6, 0]) mg.fillText(db, x0 + pos(db) - 6, h - 0.5);
   }
   let lastTime = '';
-  function tick() {
-    requestAnimationFrame(tick);
+  // the next frame is always scheduled; an exception inside one frame is reported once (AS.errors) and does not repeat 60 times a second in the log
+  function tick() { requestAnimationFrame(tick); try { tickFrame(); } catch (e) { AS.errors.report('frame', e); } }
+  function tickFrame() {
     if (eng.playing) {
       const p = eng.pos();
       if (app.mode === 'wave' && app.playDoc === app.cur && app.cur) {
