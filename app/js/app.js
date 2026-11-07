@@ -86,6 +86,7 @@
     let res = null, tags = null;
     try { tags = AS.tags.read(new Uint8Array(buf)); } catch (e) { /* no tags */ } // before decoding, which empties buf
     if (/\.(wav|wave)$/i.test(f.name)) { try { res = AS.wav.decodeWav(buf); } catch (e) { res = null; } }
+    else if (/.aiff?$/i.test(f.name)) { try { res = AS.aiff.decodeAiff(buf); } catch (e) { res = null; } } // (the system decoder does not read AIFF)
     if (!res) res = await AS.decode.audio(keep ? buf.slice(0) : buf); // at the file's own rate, no output device needed
     res.tags = tags;
     if (keep) res.buf = buf;
@@ -1058,6 +1059,7 @@
   const FORMATS = {
     wav16: { label: 'WAV 16-bit PCM', format: 'wav', bits: 16, ext: 'wav', mime: 'audio/wav' }, wav24: { label: 'WAV 24-bit PCM', format: 'wav', bits: 24, ext: 'wav', mime: 'audio/wav' },
     wav32: { label: 'WAV 32-bit float', format: 'wav', bits: 32, ext: 'wav', mime: 'audio/wav' },
+    aiff16: { label: 'AIFF 16-bit PCM', format: 'aiff', bits: 16, ext: 'aiff', mime: 'audio/aiff' }, aiff24: { label: 'AIFF 24-bit PCM', format: 'aiff', bits: 24, ext: 'aiff', mime: 'audio/aiff' },
     flac16: { label: 'FLAC 16-bit (lossless)', format: 'flac', bits: 16, ext: 'flac', mime: 'audio/flac' }, flac24: { label: 'FLAC 24-bit (lossless)', format: 'flac', bits: 24, ext: 'flac', mime: 'audio/flac' },
     mp3_128: { label: 'MP3 128 kbps', format: 'mp3', kbps: 128, ext: 'mp3', mime: 'audio/mpeg' }, mp3_192: { label: 'MP3 192 kbps', format: 'mp3', kbps: 192, ext: 'mp3', mime: 'audio/mpeg' },
     mp3_256: { label: 'MP3 256 kbps', format: 'mp3', kbps: 256, ext: 'mp3', mime: 'audio/mpeg' }, mp3_320: { label: 'MP3 320 kbps', format: 'mp3', kbps: 320, ext: 'mp3', mime: 'audio/mpeg' },
@@ -1098,6 +1100,7 @@
     const ext = ((/\.(\w+)$/.exec(p || '') || [])[1] || '').toLowerCase();
     if (ext === 'wav' || ext === 'wave') return 'wav' + ([16, 24, 32].includes(d.bits) ? d.bits : 24);
     if (ext === 'flac') return d.bits === 16 ? 'flac16' : 'flac24';
+    if (ext === 'aif' || ext === 'aiff') return d.bits === 16 ? 'aiff16' : 'aiff24';
     return null;
   }
   const docSig = (d) => d.version + ':' + d.undoStack.length + ':' + d.redoStack.length;
